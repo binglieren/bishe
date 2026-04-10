@@ -53,7 +53,12 @@
       "Bash(npm run:*)",
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\" http://localhost:5173)",
       "Bash(ls \"G:/bishe/frontend/vite.config.\"*)",
-      "mcp__Claude_Preview__preview_start"
+      "mcp__Claude_Preview__preview_start",
+      "Bash(wc -l /g/bishe/src/main/java/com/example/kaoyan/service/*.java)",
+      "Bash('C:/Program Files/PostgreSQL/14/bin/psql.exe' -U postgres -d kaoyan -c 'INSERT INTO users \\(username, password_hash, email, role\\) VALUES \\('\\\\''admin'\\\\'', '\\\\''$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy'\\\\'', '\\\\''admin@kaoyan.com'\\\\'', '\\\\''ADMIN'\\\\''\\) ON CONFLICT \\(username\\) DO UPDATE SET role = '\\\\''ADMIN'\\\\'';')",
+      "Bash(mvn compile:*)",
+      "Bash(npx vite:*)",
+      "Bash(PGPASSWORD=123456 \"C:/Program Files/PostgreSQL/14/bin/psql.exe\" -U postgres -d kaoyan -c \"DELETE FROM users WHERE username = 'admin';\")"
     ]
   }
 }

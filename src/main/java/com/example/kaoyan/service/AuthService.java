@@ -46,8 +46,9 @@ public class AuthService {
         profile.setUserId(user.getId());
         userProfileRepository.save(profile);
 
-        String token = jwtUtil.generateToken(user.getId(), user.getUsername());
-        return new LoginResponse(token, user.getId(), user.getUsername());
+        String role = user.getRole() != null ? user.getRole() : "USER";
+        String token = jwtUtil.generateToken(user.getId(), user.getUsername(), role);
+        return new LoginResponse(token, user.getId(), user.getUsername(), role);
     }
 
     /**
@@ -61,7 +62,8 @@ public class AuthService {
             throw new IllegalArgumentException("用户名或密码错误");
         }
 
-        String token = jwtUtil.generateToken(user.getId(), user.getUsername());
-        return new LoginResponse(token, user.getId(), user.getUsername());
+        String role = user.getRole() != null ? user.getRole() : "USER";
+        String token = jwtUtil.generateToken(user.getId(), user.getUsername(), role);
+        return new LoginResponse(token, user.getId(), user.getUsername(), role);
     }
 }

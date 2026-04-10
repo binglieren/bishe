@@ -1,0 +1,24 @@
+{
+  "name": "admin",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^5.4.21"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^6.1.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "antd": "^6.3.5",
+    "axios": "^1.15.0",
+    "dayjs": "^1.11.20",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^6.30.3"
+  }
+}

@@ -30,13 +30,23 @@ public class JwtUtil {
      * 生成 JWT Token
      */
     public String generateToken(Long userId, String username) {
+        return generateToken(userId, username, "USER");
+    }
+
+    public String generateToken(Long userId, String username, String role) {
         return Jwts.builder()
                 .subject(username)
                 .claim("userId", userId)
+                .claim("role", role)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + expiration))
                 .signWith(getSigningKey())
                 .compact();
+    }
+
+    public String getRoleFromToken(String token) {
+        String role = getClaims(token).get("role", String.class);
+        return role != null ? role : "USER";
     }
 
     /**

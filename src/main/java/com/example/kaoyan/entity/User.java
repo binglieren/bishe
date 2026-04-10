@@ -30,6 +30,10 @@ public class User {
 
     private String avatar;
 
+    /** 角色：USER / ADMIN */
+    @Column(length = 20)
+    private String role = "USER";
+
     @CreationTimestamp
     @Column(name = "created_at")
     private LocalDateTime createdAt;
