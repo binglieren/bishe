@@ -1,0 +1,54 @@
+# Java / Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+
+# Spring Boot
+.apt_generated
+.springBeans
+sts_*
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+
+# Mobile / Expo
+.expo/
+*.jks
+*.keystore
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Env & Secrets
+.env
+.env.*
+*.local
+
+# Uploads
+uploads/
+
+# Cache
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
