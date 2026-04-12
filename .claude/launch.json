@@ -15,5 +15,12 @@
       "port": 5174,
       "cwd": "admin"
     }
+  ,{
+      "name": "expo-web",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["expo", "start", "--web", "--port", "8082"],
+      "port": 8082,
+      "cwd": "mobile"
+    }
   ]
 }

@@ -28,7 +28,7 @@ public class AiConfigController {
     @Value("${llm.model}")
     private String defaultModel;
 
-    @Value("${llm.embedding-model}")
+    @Value("${llm.embedding-model:}")
     private String defaultEmbeddingModel;
 
     @GetMapping

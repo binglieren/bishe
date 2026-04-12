@@ -50,22 +50,28 @@ public class ChatService {
         userMsg.setContent(userMessage);
         chatMessageRepository.save(userMsg);
 
-        float[] queryVector = llmService.getEmbedding(userMessage, userId);
-        // #region agent log
-        AgentDebugLog.ndjson("H2", "ChatService.sendMessage:afterEmbedding", "embedding ok",
-                "{\"dim\":" + queryVector.length + "}");
-        // #endregion
-        String vectorStr = llmService.vectorToString(queryVector);
+        String context = "";
+        try {
+            float[] queryVector = llmService.getEmbedding(userMessage, userId);
+            // #region agent log
+            AgentDebugLog.ndjson("H2", "ChatService.sendMessage:afterEmbedding", "embedding ok",
+                    "{\"dim\":" + queryVector.length + "}");
+            // #endregion
+            String vectorStr = llmService.vectorToString(queryVector);
 
-        List<DocumentChunk> relevantChunks = documentChunkRepository.findSimilarChunks(userId, vectorStr, 5);
-        // #region agent log
-        AgentDebugLog.ndjson("H3", "ChatService.sendMessage:afterRag", "similar chunks",
-                "{\"count\":" + relevantChunks.size() + "}");
-        // #endregion
-
-        String context = relevantChunks.stream()
-                .map(DocumentChunk::getContent)
-                .collect(Collectors.joining("\n\n---\n\n"));
+            List<DocumentChunk> relevantChunks = documentChunkRepository.findSimilarChunks(userId, vectorStr, 5);
+            // #region agent log
+            AgentDebugLog.ndjson("H3", "ChatService.sendMessage:afterRag", "similar chunks",
+                    "{\"count\":" + relevantChunks.size() + "}");
+            // #endregion
+            context = relevantChunks.stream()
+                    .map(DocumentChunk::getContent)
+                    .collect(Collectors.joining("\n\n---\n\n"));
+        } catch (Exception e) {
+            // #region agent log
+            AgentDebugLog.ndjson("H2skip", "ChatService.sendMessage:embeddingSkipped", "embedding unavailable, skipping RAG", "{}");
+            // #endregion
+        }
 
         List<ChatMessage> history = chatMessageRepository.findTop10BySessionIdOrderByCreatedAtDesc(sessionId);
         Collections.reverse(history);

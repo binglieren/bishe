@@ -2,7 +2,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const request = axios.create({
-  baseURL: 'http://localhost:8088/api',
+  baseURL: 'http://192.168.0.102:8088/api',
   timeout: 30000,
 });
 
@@ -26,7 +26,8 @@ request.interceptors.response.use(
     if (error.response?.status === 403) {
       await AsyncStorage.removeItem('token');
     }
-    return Promise.reject(error);
+    const message = error.response?.data?.message || error.message || '请求失败';
+    return Promise.reject(new Error(message));
   }
 );
 

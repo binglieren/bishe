@@ -34,10 +34,9 @@ jwt:
 
 # LLM API 配置
 llm:
-  api-key: your-api-key-here
-  api-url: https://api.openai.com/v1
-  model: gpt-4o-mini
-  embedding-model: text-embedding-3-small
+  api-key: sk-oaLWXnXz5RDWAmFSHyzP1eEAlJYfa6pYWASQyIgMKUOs9eFF9QcxpThLaL52W9wS
+  api-url: https://opencode.ai/zen/go/v1/chat/completions
+  model: glm-5.1
 
 # 文件上传路径
 file:

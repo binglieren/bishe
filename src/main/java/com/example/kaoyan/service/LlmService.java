@@ -28,7 +28,7 @@ public class LlmService {
     @Value("${llm.model}")
     private String defaultModel;
 
-    @Value("${llm.embedding-model}")
+    @Value("${llm.embedding-model:}")
     private String defaultEmbeddingModel;
 
     private AiConfig getUserConfig(Long userId) {
@@ -44,12 +44,22 @@ public class LlmService {
         return defaultApiKey;
     }
 
+    private String normalizeApiUrl(String url) {
+        if (url == null) return null;
+        url = url.trim();
+        // Strip trailing slash and common endpoint suffixes so base URL is clean
+        if (url.endsWith("/chat/completions")) url = url.substring(0, url.length() - "/chat/completions".length());
+        if (url.endsWith("/completions"))      url = url.substring(0, url.length() - "/completions".length());
+        if (url.endsWith("/"))                 url = url.substring(0, url.length() - 1);
+        return url;
+    }
+
     private String resolveApiUrl(Long userId) {
         AiConfig config = getUserConfig(userId);
         if (config != null && config.getApiUrl() != null && !config.getApiUrl().isBlank()) {
-            return config.getApiUrl();
+            return normalizeApiUrl(config.getApiUrl());
         }
-        return defaultApiUrl;
+        return normalizeApiUrl(defaultApiUrl);
     }
 
     private String resolveChatModel(Long userId) {
