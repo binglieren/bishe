@@ -26,4 +26,7 @@ public class UserInfoDTO {
     // 学习统计
     private Integer checkInDays;
     private Integer totalStudyMinutes;
+
+    /** 今日是否已打卡（用于前端控制按钮状态） */
+    private Boolean checkedInToday;
 }

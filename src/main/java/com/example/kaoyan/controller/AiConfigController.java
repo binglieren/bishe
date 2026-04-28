@@ -31,6 +31,12 @@ public class AiConfigController {
     @Value("${llm.embedding-model:}")
     private String defaultEmbeddingModel;
 
+    @Value("${llm.embedding-api-url:}")
+    private String defaultEmbeddingApiUrl;
+
+    @Value("${llm.embedding-api-key:}")
+    private String defaultEmbeddingApiKey;
+
     @GetMapping
     @Operation(summary = "获取当前 AI 配置")
     public Result<AiConfigDTO> getConfig(Authentication auth) {
@@ -43,6 +49,8 @@ public class AiConfigController {
             dto.setApiUrl(config.getApiUrl());
             dto.setChatModel(config.getChatModel());
             dto.setEmbeddingModel(config.getEmbeddingModel());
+            dto.setEmbeddingApiUrl(config.getEmbeddingApiUrl());
+            dto.setEmbeddingApiKey(config.getEmbeddingApiKey() != null ? "******" : null);
             dto.setTemperature(config.getTemperature());
             dto.setMaxTokens(config.getMaxTokens());
             dto.setSystemPrompt(config.getSystemPrompt());
@@ -50,6 +58,7 @@ public class AiConfigController {
             dto.setApiUrl(defaultApiUrl);
             dto.setChatModel(defaultModel);
             dto.setEmbeddingModel(defaultEmbeddingModel);
+            dto.setEmbeddingApiUrl(defaultEmbeddingApiUrl);
             dto.setTemperature(0.7);
             dto.setMaxTokens(2000);
         }
@@ -69,6 +78,10 @@ public class AiConfigController {
         if (dto.getApiUrl() != null) config.setApiUrl(dto.getApiUrl());
         if (dto.getChatModel() != null) config.setChatModel(dto.getChatModel());
         if (dto.getEmbeddingModel() != null) config.setEmbeddingModel(dto.getEmbeddingModel());
+        if (dto.getEmbeddingApiUrl() != null) config.setEmbeddingApiUrl(dto.getEmbeddingApiUrl());
+        if (dto.getEmbeddingApiKey() != null && !"******".equals(dto.getEmbeddingApiKey())) {
+            config.setEmbeddingApiKey(dto.getEmbeddingApiKey());
+        }
         if (dto.getTemperature() != null) config.setTemperature(dto.getTemperature());
         if (dto.getMaxTokens() != null) config.setMaxTokens(dto.getMaxTokens());
         if (dto.getSystemPrompt() != null) config.setSystemPrompt(dto.getSystemPrompt());
@@ -86,6 +99,8 @@ public class AiConfigController {
         result.setApiUrl(config.getApiUrl());
         result.setChatModel(config.getChatModel());
         result.setEmbeddingModel(config.getEmbeddingModel());
+        result.setEmbeddingApiUrl(config.getEmbeddingApiUrl());
+        result.setEmbeddingApiKey(config.getEmbeddingApiKey() != null ? "******" : null);
         result.setTemperature(config.getTemperature());
         result.setMaxTokens(config.getMaxTokens());
         result.setSystemPrompt(config.getSystemPrompt());

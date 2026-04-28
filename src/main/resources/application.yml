@@ -32,11 +32,47 @@ jwt:
   secret: your-256-bit-secret-key-here-change-in-production-environment
   expiration: 86400000  # 24小时（毫秒）
 
-# LLM API 配置
+# LLM API 配置（系统默认；管理员可在 admin 后台「API 配置」页按 stage 独立配置）
+#
+# 解析链（从高到低）：
+#   ① 用户 AiConfig（仅 chat 阶段生效，其他 stage 严格隔离）
+#   ② SystemApiConfig（DB）— 管理员后台维护，5 个 stage 各自独立
+#   ③ 本文件 — 仅作为数据库还没有该 stage 行时的首次播种 + 兜底
+#
+# ⚠️ 修改本文件后须让 DB 重新播种：
+#   ① 进 admin 后台「API 配置」页手动改对应 stage；或
+#   ② 执行 DELETE FROM system_api_config; 然后重启后端
 llm:
-  api-key: sk-oaLWXnXz5RDWAmFSHyzP1eEAlJYfa6pYWASQyIgMKUOs9eFF9QcxpThLaL52W9wS
-  api-url: https://opencode.ai/zen/go/v1/chat/completions
-  model: glm-5.1
+  # ── ① chat：DeepSeek V4 Pro（文本对话主力） ──
+  # 适用：AI 答疑文本路径、对话标题生成、题目知识点打标
+  api-key: sk-e55e0a57fff842eb8386f6042467cfc4
+  api-url: https://api.deepseek.com
+  model: deepseek-v4-pro
+
+  # ── ② multimodal：DeepSeek V4 Pro（拍照搜题、题目结构化） ──
+  # multimodal 默认与 chat 同 url+key，但模型独立可换；admin 后台可独立配置
+  # （播种代码会用 chat 的 url+key 作为默认，避免重复填）
+
+  # ── ③ embedding：通义千问 text-embedding-v4 (DashScope OpenAI 兼容) ──
+  # 支持 dimensions = 64/128/256/512/768/1024/1536/2048；DB 列固定 1536，自动请求该维度
+  embedding-model: text-embedding-v4
+  embedding-api-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  embedding-api-key: sk-0f77a6941aff43bab6b8d21db90134bf
+
+  # ── ④ audio (STT)：千问 Qwen-Omni (DashScope OpenAI 兼容) ──
+  # 走 /chat/completions + content[input_audio]，base64 直传，不需要文件 URL
+  # 候选模型：qwen3-omni-flash / qwen-omni-turbo / qwen3-omni-30b-a3b-instruct
+  audio-model: qwen3-omni-flash
+  audio-api-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  audio-api-key: sk-0f77a6941aff43bab6b8d21db90134bf
+
+  # ── ⑤ tts：CosyVoice (DashScope native HTTP，非 OpenAI 兼容) ──
+  # 端点：/api/v1/services/audio/tts/SpeechSynthesizer
+  # 同步返回的是音频下载 URL（24h 有效），后端会自动二次拉取转 base64 下发
+  # 候选音色：longwan / longxiaochun / longanyang / longxiaobei …（详见 DashScope 文档）
+  tts-model: cosyvoice-v3-flash
+  tts-api-url: https://dashscope.aliyuncs.com/api/v1
+  tts-api-key: sk-0f77a6941aff43bab6b8d21db90134bf
 
 # 文件上传路径
 file:

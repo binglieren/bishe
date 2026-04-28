@@ -11,6 +11,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+import java.util.AbstractMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +30,8 @@ public class QuestionService {
     private final KnowledgePointRepository knowledgePointRepository;
     private final WrongAnswerRepository wrongAnswerRepository;
     private final KnowledgeMasteryRepository knowledgeMasteryRepository;
+    private final UserQuestionRepository userQuestionRepository;
+    private final com.example.kaoyan.repository.QuestionKnowledgePointRepository questionKnowledgePointRepository;
 
     /**
      * 创建题目
@@ -35,7 +39,7 @@ public class QuestionService {
     @Transactional
     public Question createQuestion(QuestionDTO dto) {
         Question question = new Question();
-        question.setSubject(dto.getSubject());
+        question.setSubject(normalizeSubject(dto.getSubject()));
         question.setType(dto.getType());
         question.setDifficulty(dto.getDifficulty());
         question.setContent(dto.getContent());
@@ -170,13 +174,173 @@ public class QuestionService {
         return questionRepository.findRandomBySubject(subject, pageable);
     }
 
+    // ===================== 用户个人题库 =====================
+
+    /**
+     * 获取用户个人题库列表（含题目详情和做题统计）
+     */
+    public List<UserQuestion> getUserQuestions(Long userId) {
+        return userQuestionRepository.findByUserIdOrderByCreatedAtDesc(userId);
+    }
+
+    /**
+     * 获取用户积累的知识点列表
+     */
+    public List<KnowledgePoint> getUserKnowledgePoints(Long userId) {
+        return userQuestionRepository.findKnowledgePointsByUserId(userId);
+    }
+
+    /**
+     * 记录一次做题并更新 UserQuestion 统计（正确率、上次做题时间）
+     */
+    @Transactional
+    public Map<String, Object> recordAttemptForUserQuestion(Long userId, AnswerRequest request) {
+        Map<String, Object> result = submitAnswer(userId, request);
+        // 不存在则创建（允许从推荐列表练习时自动加入用户题库）
+        UserQuestion uq = userQuestionRepository.findByUserIdAndQuestionId(userId, request.getQuestionId())
+                .orElseGet(() -> {
+                    UserQuestion nu = new UserQuestion();
+                    nu.setUserId(userId);
+                    nu.setQuestionId(request.getQuestionId());
+                    nu.setCorrectCount(0);
+                    nu.setTotalAttempts(0);
+                    return nu;
+                });
+        uq.setTotalAttempts((uq.getTotalAttempts() == null ? 0 : uq.getTotalAttempts()) + 1);
+        if (Boolean.TRUE.equals(result.get("isCorrect"))) {
+            uq.setCorrectCount((uq.getCorrectCount() == null ? 0 : uq.getCorrectCount()) + 1);
+        }
+        uq.setLastAttemptAt(LocalDateTime.now());
+        userQuestionRepository.save(uq);
+        return result;
+    }
+
+    /**
+     * 获取相似题目推荐。
+     *
+     * 流程：
+     *   A. 向量召回：用 pgvector 余弦距离取 top-N（N = limit * 3）
+     *   B. 标签召回：取和本题多标签有交集的题目
+     *   C. 合并候选，按"向量相似度 0.6 + Jaccard 标签重合度 0.4"重排
+     *   D. 若向量不可用则降级到标签召回 → 再降级到单主知识点召回
+     */
+    public List<Question> getSimilarQuestions(Long questionId, int limit) {
+        Question q = questionRepository.findById(questionId)
+                .orElseThrow(() -> new IllegalArgumentException("题目不存在"));
+
+        // 本题的标签集合
+        List<com.example.kaoyan.entity.QuestionKnowledgePoint> myTags =
+                questionKnowledgePointRepository.findByQuestionId(questionId);
+        java.util.Set<Long> myTagIds = myTags.stream()
+                .map(com.example.kaoyan.entity.QuestionKnowledgePoint::getKnowledgePointId)
+                .collect(java.util.stream.Collectors.toSet());
+
+        // A. 向量召回
+        List<Question> byVector = java.util.Collections.emptyList();
+        try {
+            byVector = questionRepository.findSimilarByVector(questionId,
+                    "(SELECT embedding::text FROM question WHERE id = " + questionId + ")",
+                    limit * 3);
+        } catch (Exception ignored) { /* 向量不可用 */ }
+
+        // B. 标签召回
+        List<Question> byTag = java.util.Collections.emptyList();
+        if (!myTagIds.isEmpty()) {
+            java.util.List<Long> qIds = questionKnowledgePointRepository
+                    .findQuestionIdsByKnowledgePointIdIn(myTagIds);
+            qIds.remove(questionId);
+            if (!qIds.isEmpty()) {
+                byTag = questionRepository.findAllById(qIds);
+            }
+        }
+
+        // C. 合并 + 重排
+        java.util.Map<Long, Question> merged = new java.util.LinkedHashMap<>();
+        for (Question x : byVector) merged.putIfAbsent(x.getId(), x);
+        for (Question x : byTag)    merged.putIfAbsent(x.getId(), x);
+
+        if (merged.isEmpty()) {
+            // D. 降级到单主知识点
+            if (q.getKnowledgePointId() != null) {
+                Pageable pageable = PageRequest.of(0, limit);
+                return questionRepository.findByKnowledgePointIdAndIdNot(
+                        q.getKnowledgePointId(), questionId, pageable);
+            }
+            return List.of();
+        }
+
+        // 向量顺序给相似度分（越前越高）
+        java.util.Map<Long, Double> vectorScore = new java.util.HashMap<>();
+        for (int i = 0; i < byVector.size(); i++) {
+            vectorScore.put(byVector.get(i).getId(), 1.0 - (double) i / byVector.size());
+        }
+
+        // 预加载候选标签
+        java.util.List<Long> candidateIds = new java.util.ArrayList<>(merged.keySet());
+        java.util.Map<Long, java.util.Set<Long>> candTags = new java.util.HashMap<>();
+        for (com.example.kaoyan.entity.QuestionKnowledgePoint qkp :
+                questionKnowledgePointRepository.findByQuestionIdIn(candidateIds)) {
+            candTags.computeIfAbsent(qkp.getQuestionId(), k -> new java.util.HashSet<>())
+                    .add(qkp.getKnowledgePointId());
+        }
+
+        // 综合打分
+        return merged.values().stream()
+                .map(x -> {
+                    double vec = vectorScore.getOrDefault(x.getId(), 0.0);
+                    java.util.Set<Long> tags = candTags.getOrDefault(x.getId(), java.util.Collections.emptySet());
+                    double jac = 0.0;
+                    if (!tags.isEmpty() && !myTagIds.isEmpty()) {
+                        java.util.Set<Long> inter = new java.util.HashSet<>(tags);
+                        inter.retainAll(myTagIds);
+                        java.util.Set<Long> union = new java.util.HashSet<>(tags);
+                        union.addAll(myTagIds);
+                        jac = (double) inter.size() / Math.max(1, union.size());
+                    }
+                    double composite = vec * 0.6 + jac * 0.4;
+                    return new AbstractMap.SimpleEntry<>(x, composite);
+                })
+                .sorted((a, b) -> Double.compare(b.getValue(), a.getValue()))
+                .limit(limit)
+                .map(java.util.Map.Entry::getKey)
+                .collect(java.util.stream.Collectors.toList());
+    }
+
+    // ======================================================
+
+    /**
+     * 题目分类归一化：保存时统一收敛到 [数学, 英语, 专业课] 三个分类。
+     *   - "数学" → 数学
+     *   - "英语" → 英语
+     *   - 其他（含 政治/历史/原专业课/未识别）→ 专业课
+     *
+     * 题库筛选与统计基于此分类，新题保存与从图片提取均会经过此函数。
+     */
+    public static String normalizeSubject(String raw) {
+        if (raw == null) return "专业课";
+        String s = raw.trim();
+        if (s.isEmpty()) return "专业课";
+        if (s.contains("数学") || s.equalsIgnoreCase("math") || s.equalsIgnoreCase("maths")) return "数学";
+        if (s.contains("英语") || s.equalsIgnoreCase("english") || s.equalsIgnoreCase("eng")) return "英语";
+        // 政治/专业课/其他统一归为"专业课"
+        return "专业课";
+    }
+
     private boolean checkAnswer(Question question, String userAnswer) {
         if (userAnswer == null) return false;
         String type = question.getType();
         if ("单选".equals(type) || "多选".equals(type)) {
-            return question.getAnswer().trim().equalsIgnoreCase(userAnswer.trim());
+            // 多选题：排序后比较（AB == BA）
+            String normalizedAnswer = question.getAnswer().trim().toUpperCase()
+                    .chars().sorted()
+                    .collect(StringBuilder::new, (sb, c) -> sb.append((char) c), StringBuilder::append)
+                    .toString();
+            String normalizedUser = userAnswer.trim().toUpperCase()
+                    .chars().sorted()
+                    .collect(StringBuilder::new, (sb, c) -> sb.append((char) c), StringBuilder::append)
+                    .toString();
+            return normalizedAnswer.equals(normalizedUser);
         }
-        // 填空和简答用包含判断（简化处理）
         return question.getAnswer().trim().equalsIgnoreCase(userAnswer.trim());
     }
 

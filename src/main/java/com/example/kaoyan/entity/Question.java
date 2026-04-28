@@ -19,7 +19,7 @@ public class Question {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** 科目：政治、英语、数学、专业课 */
+    /** 科目分类：数学 / 英语 / 专业课（保存时归一化，见 QuestionService.normalizeSubject） */
     @Column(nullable = false, length = 20)
     private String subject;
 
@@ -53,8 +53,17 @@ public class Question {
     @Column(length = 100)
     private String source;
 
-    @OneToMany(mappedBy = "questionId", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @OneToMany(cascade = CascadeType.ALL, fetch = FetchType.EAGER)
+    @JoinColumn(name = "question_id")
     private List<QuestionOption> options;
+
+    /** Embedding 处理状态: pending | success | failed | skipped */
+    @Column(name = "embedding_status", length = 20)
+    private String embeddingStatus = "pending";
+
+    /** LLM 打标状态: pending | success | failed */
+    @Column(name = "tagging_status", length = 20)
+    private String taggingStatus = "pending";
 
     @CreationTimestamp
     @Column(name = "created_at")

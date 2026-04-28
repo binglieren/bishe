@@ -7,6 +7,7 @@ import {
   FileTextOutlined,
   FormOutlined,
   ApartmentOutlined,
+  ApiOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -20,6 +21,7 @@ const menuItems = [
   { key: '/questions', icon: <FileTextOutlined />, label: '题库管理' },
   { key: '/exams', icon: <FormOutlined />, label: '考试管理' },
   { key: '/knowledge-points', icon: <ApartmentOutlined />, label: '知识点管理' },
+  { key: '/api-config', icon: <ApiOutlined />, label: 'API 配置' },
 ];
 
 export default function AdminLayout() {

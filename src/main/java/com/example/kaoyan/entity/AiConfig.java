@@ -29,6 +29,13 @@ public class AiConfig {
     @Column(name = "embedding_model")
     private String embeddingModel;
 
+    /** Embedding 独立端点（可与 chat 不同厂商） */
+    @Column(name = "embedding_api_url")
+    private String embeddingApiUrl;
+
+    @Column(name = "embedding_api_key")
+    private String embeddingApiKey;
+
     @Column(name = "temperature")
     private Double temperature;
 

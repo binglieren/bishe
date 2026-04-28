@@ -1,6 +1,5 @@
 package com.example.kaoyan.controller;
 
-import com.example.kaoyan.entity.Exam;
 import com.example.kaoyan.entity.KnowledgePoint;
 import com.example.kaoyan.entity.Question;
 import com.example.kaoyan.entity.User;
@@ -96,33 +95,6 @@ public class AdminController {
     public Result<Void> deleteQuestion(@PathVariable Long questionId) {
         adminService.deleteQuestion(questionId);
         return Result.success("题目已删除");
-    }
-
-    // ==================== 考试管理 ====================
-
-    @GetMapping("/exams")
-    public Result<Page<Exam>> getExamList(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size) {
-        return Result.success(adminService.getExamList(page, size));
-    }
-
-    @PostMapping("/exams")
-    public Result<Exam> createExam(@RequestBody Exam exam) {
-        return Result.success(adminService.createExam(exam));
-    }
-
-    @PutMapping("/exams/{examId}")
-    public Result<Exam> updateExam(
-            @PathVariable Long examId,
-            @RequestBody Exam exam) {
-        return Result.success(adminService.updateExam(examId, exam));
-    }
-
-    @DeleteMapping("/exams/{examId}")
-    public Result<Void> deleteExam(@PathVariable Long examId) {
-        adminService.deleteExam(examId);
-        return Result.success("考试已删除");
     }
 
     // ==================== 知识点管理 ====================

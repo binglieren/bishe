@@ -50,7 +50,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         String uri = request.getRequestURI();
-        if (uri != null && uri.contains("/api/chat")) {
+        if (uri != null && (uri.contains("/api/chat") || uri.contains("/api/document"))) {
             // #region agent log
             String safe = uri.replace("\"", "'");
             AgentDebugLog.ndjson("H0", "JwtAuthenticationFilter", "chat path",

@@ -48,6 +48,9 @@ public class UserService {
         dto.setStudyStartDate(profile.getStudyStartDate());
         dto.setCheckInDays(checkInRepository.countByUserId(userId));
         dto.setTotalStudyMinutes(checkInRepository.sumStudyMinutesByUserId(userId));
+        dto.setCheckedInToday(
+                checkInRepository.findByUserIdAndCheckDate(userId, java.time.LocalDate.now()).isPresent()
+        );
 
         return dto;
     }
@@ -69,6 +72,26 @@ public class UserService {
         profile.setExamDate(dto.getExamDate());
         profile.setStudyStartDate(dto.getStudyStartDate());
         userProfileRepository.save(profile);
+    }
+
+    /**
+     * 更新头像（base64 字符串，含或不含 data: 前缀）
+     */
+    @Transactional
+    public String uploadAvatar(Long userId, String imageBase64) {
+        if (imageBase64 == null || imageBase64.isBlank()) {
+            throw new IllegalArgumentException("头像数据不能为空");
+        }
+        // 如果前端没带 data: 前缀，自动补全为 jpeg
+        String value = imageBase64.startsWith("data:")
+                ? imageBase64
+                : "data:image/jpeg;base64," + imageBase64;
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
+        user.setAvatar(value);
+        userRepository.save(user);
+        return value;
     }
 
     /**

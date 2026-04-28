@@ -31,14 +31,16 @@ public class AuthService {
         if (userRepository.existsByUsername(request.getUsername())) {
             throw new IllegalArgumentException("用户名已存在");
         }
-        if (request.getEmail() != null && userRepository.existsByEmail(request.getEmail())) {
+        String email = (request.getEmail() != null && !request.getEmail().isBlank())
+                ? request.getEmail().trim() : null;
+        if (email != null && userRepository.existsByEmail(email)) {
             throw new IllegalArgumentException("邮箱已被注册");
         }
 
         User user = new User();
         user.setUsername(request.getUsername());
         user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
-        user.setEmail(request.getEmail());
+        user.setEmail(email);
         userRepository.save(user);
 
         // 创建空的用户档案

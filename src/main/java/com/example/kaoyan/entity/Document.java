@@ -20,6 +20,14 @@ public class Document {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
+    /** 所属知识库 */
+    @Column(name = "knowledge_base_id")
+    private Long knowledgeBaseId;
+
+    /** 是否在当前知识库中启用（用于 RAG 检索过滤） */
+    @Column(nullable = false)
+    private Boolean enabled = true;
+
     @Column(nullable = false)
     private String filename;
 

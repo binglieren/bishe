@@ -28,6 +28,7 @@ public class User {
     @Column(unique = true, length = 100)
     private String email;
 
+    @Column(columnDefinition = "TEXT")
     private String avatar;
 
     /** 角色：USER / ADMIN */

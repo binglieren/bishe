@@ -57,3 +57,10 @@ export const updateKnowledgePoint = (kpId, data) =>
 
 export const deleteKnowledgePoint = (kpId) =>
   request.delete(`/admin/knowledge-points/${kpId}`);
+
+// 全局 API 配置
+export const getApiConfigs = () =>
+  request.get('/admin/system-config/api');
+
+export const updateApiConfig = (stage, data) =>
+  request.put(`/admin/system-config/api/${stage}`, data);

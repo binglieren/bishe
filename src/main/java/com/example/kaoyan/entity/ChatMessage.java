@@ -28,6 +28,10 @@ public class ChatMessage {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
+    /** 图片 base64 编码（拍照搜题时存储） */
+    @Column(name = "image_base64", columnDefinition = "TEXT")
+    private String imageBase64;
+
     @CreationTimestamp
     @Column(name = "created_at")
     private LocalDateTime createdAt;

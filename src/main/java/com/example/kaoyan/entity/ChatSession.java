@@ -25,6 +25,10 @@ public class ChatSession {
     @Column(length = 200)
     private String title;
 
+    /** 本次会话绑定的知识库，null = 不启用 RAG 检索 */
+    @Column(name = "knowledge_base_id")
+    private Long knowledgeBaseId;
+
     @CreationTimestamp
     @Column(name = "created_at")
     private LocalDateTime createdAt;

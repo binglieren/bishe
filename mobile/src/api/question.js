@@ -19,3 +19,17 @@ export const resolveWrongAnswer = (id) =>
 
 export const getKnowledgePoints = (subject) =>
   request.get('/question/knowledge-points', { params: { subject } });
+
+// ===== 用户个人题库 =====
+export const getMyQuestions = () => request.get('/question/my');
+
+export const getMyKnowledgePoints = () => request.get('/question/my/knowledge-points');
+
+export const recordAttempt = (id, data) => request.post(`/question/${id}/attempt`, data);
+
+export const getSimilarQuestions = (id, limit = 5) =>
+  request.get(`/question/${id}/similar`, { params: { limit } });
+
+// 个性化推荐（基于薄弱知识点 + 知识点树扩展）
+export const getRecommendations = (limit = 10) =>
+  request.get('/question/recommend', { params: { limit } });

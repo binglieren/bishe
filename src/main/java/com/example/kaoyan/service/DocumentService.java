@@ -35,17 +35,21 @@ public class DocumentService {
     private final DocumentRepository documentRepository;
     private final DocumentChunkRepository documentChunkRepository;
     private final LlmService llmService;
+    private final KnowledgeBaseService knowledgeBaseService;
 
     @Value("${file.upload-dir}")
     private String uploadDir;
 
     /**
-     * 上传文档
+     * 上传文档到指定知识库
      */
     @Transactional
-    public Document uploadDocument(Long userId, MultipartFile file) throws IOException {
+    public Document uploadDocument(Long userId, Long knowledgeBaseId, MultipartFile file) throws IOException {
+        // 校验 KB 归属
+        knowledgeBaseService.requireOwned(userId, knowledgeBaseId);
+
         // 创建上传目录
-        Path uploadPath = Paths.get(uploadDir);
+        Path uploadPath = Paths.get(uploadDir).toAbsolutePath();
         if (!Files.exists(uploadPath)) {
             Files.createDirectories(uploadPath);
         }
@@ -58,6 +62,8 @@ public class DocumentService {
         // 保存文档记录
         Document document = new Document();
         document.setUserId(userId);
+        document.setKnowledgeBaseId(knowledgeBaseId);
+        document.setEnabled(true);
         document.setFilename(filename);
         document.setOriginalFilename(file.getOriginalFilename());
         document.setFileSize(file.getSize());
@@ -65,25 +71,18 @@ public class DocumentService {
         document.setStatus("PROCESSING");
         documentRepository.save(document);
 
-        // 异步处理文档
+        // 异步处理
         processDocumentAsync(document, filePath.toString());
 
         return document;
     }
 
-    /**
-     * 异步处理文档：提取文本 → 分块 → 向量化
-     */
     @Async
     public void processDocumentAsync(Document document, String filePath) {
         try {
-            // 1. 提取文本
             String text = extractText(filePath, document.getFileType());
-
-            // 2. 分块
             List<String> chunks = splitText(text, 500, 50);
 
-            // 3. 向量化并存储
             for (int i = 0; i < chunks.size(); i++) {
                 String chunkText = chunks.get(i);
                 float[] embedding = llmService.getEmbedding(chunkText, document.getUserId());
@@ -107,9 +106,6 @@ public class DocumentService {
         }
     }
 
-    /**
-     * 提取文本内容
-     */
     private String extractText(String filePath, String fileType) throws IOException {
         if (fileType != null && fileType.contains("pdf")) {
             try (PDDocument pdf = Loader.loadPDF(new File(filePath))) {
@@ -117,17 +113,12 @@ public class DocumentService {
                 return stripper.getText(pdf);
             }
         }
-        // 默认按纯文本处理
         return Files.readString(Path.of(filePath));
     }
 
-    /**
-     * 文本分块：按字符数切分，保留上下文重叠
-     */
     private List<String> splitText(String text, int chunkSize, int overlap) {
         List<String> chunks = new ArrayList<>();
         if (text == null || text.isEmpty()) return chunks;
-
         int start = 0;
         while (start < text.length()) {
             int end = Math.min(start + chunkSize, text.length());
@@ -137,18 +128,31 @@ public class DocumentService {
         return chunks;
     }
 
-    /**
-     * 获取用户的文档列表
-     */
-    public List<Document> getUserDocuments(Long userId) {
-        return documentRepository.findByUserIdOrderByUploadTimeDesc(userId);
+    /** 获取某个知识库下的文档列表 */
+    public List<Document> getKnowledgeBaseDocuments(Long userId, Long knowledgeBaseId) {
+        knowledgeBaseService.requireOwned(userId, knowledgeBaseId);
+        return documentRepository.findByUserIdAndKnowledgeBaseIdOrderByUploadTimeDesc(userId, knowledgeBaseId);
     }
 
-    /**
-     * 删除文档
-     */
+    /** 切换单个文档的启用状态 */
     @Transactional
-    public void deleteDocument(Long documentId) {
+    public Document setEnabled(Long userId, Long documentId, boolean enabled) {
+        Document doc = documentRepository.findById(documentId)
+                .orElseThrow(() -> new IllegalArgumentException("文档不存在"));
+        if (!doc.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("无权操作此文档");
+        }
+        doc.setEnabled(enabled);
+        return documentRepository.save(doc);
+    }
+
+    @Transactional
+    public void deleteDocument(Long userId, Long documentId) {
+        Document doc = documentRepository.findById(documentId)
+                .orElseThrow(() -> new IllegalArgumentException("文档不存在"));
+        if (!doc.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("无权操作此文档");
+        }
         documentChunkRepository.deleteByDocumentId(documentId);
         documentRepository.deleteById(documentId);
     }

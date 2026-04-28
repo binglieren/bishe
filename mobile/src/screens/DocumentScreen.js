@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, FlatList } from 'react-native';
+import { View, StyleSheet, FlatList, Platform } from 'react-native';
 import { Text, Card, Button, Chip, Snackbar } from 'react-native-paper';
 import * as DocumentPicker from 'expo-document-picker';
 import { uploadDocument, getDocuments, deleteDocument } from '../api/document';
@@ -35,14 +35,12 @@ export default function DocumentScreen() {
       });
       if (result.canceled) return;
       setUploading(true);
-      const file = result.assets[0];
-      const formData = new FormData();
-      formData.append('file', {
-        uri: file.uri,
-        name: file.name,
-        type: file.mimeType || 'application/octet-stream',
-      });
-      await uploadDocument(formData);
+      const asset = result.assets[0];
+      // Web 平台用真实 File 对象，Native 用 {uri, name, type}
+      const filePayload = (Platform.OS === 'web' && asset.file)
+        ? asset.file
+        : { uri: asset.uri, name: asset.name, type: asset.mimeType || 'application/octet-stream' };
+      await uploadDocument(filePayload);
       setSnackMsg('上传成功，正在处理中');
       setSnackVisible(true);
       loadDocuments();

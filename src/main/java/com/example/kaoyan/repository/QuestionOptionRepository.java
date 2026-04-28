@@ -9,5 +9,7 @@ public interface QuestionOptionRepository extends JpaRepository<QuestionOption, 
 
     List<QuestionOption> findByQuestionId(Long questionId);
 
+    List<QuestionOption> findByQuestionIdOrderByLabelAsc(Long questionId);
+
     void deleteByQuestionId(Long questionId);
 }

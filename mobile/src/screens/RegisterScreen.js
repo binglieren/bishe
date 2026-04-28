@@ -4,6 +4,13 @@ import { Text, TextInput, Button, Card, Snackbar } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { register } from '../api/auth';
 
+const passwordRules = [
+  { label: '至少 8 位字符', test: (p) => p.length >= 8 },
+  { label: '包含小写字母', test: (p) => /[a-z]/.test(p) },
+  { label: '包含大写字母', test: (p) => /[A-Z]/.test(p) },
+  { label: '包含数字',     test: (p) => /\d/.test(p) },
+];
+
 export default function RegisterScreen({ navigation }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -18,8 +25,13 @@ export default function RegisterScreen({ navigation }) {
       setSnackVisible(true);
       return;
     }
-    if (password.length < 6) {
-      setSnackMsg('密码至少6个字符');
+    if (password.length < 8) {
+      setSnackMsg('密码至少8位');
+      setSnackVisible(true);
+      return;
+    }
+    if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(password)) {
+      setSnackMsg('密码必须包含大写字母、小写字母和数字');
       setSnackVisible(true);
       return;
     }
@@ -62,6 +74,21 @@ export default function RegisterScreen({ navigation }) {
             style={styles.input}
             left={<TextInput.Icon icon="lock" />}
           />
+          <View style={styles.rulesBox}>
+            {passwordRules.map((rule) => {
+              const passed = rule.test(password);
+              return (
+                <View key={rule.label} style={styles.ruleRow}>
+                  <Text style={[styles.ruleDot, passed ? styles.rulePassed : styles.ruleFailed]}>
+                    {passed ? '✓' : '✗'}
+                  </Text>
+                  <Text style={[styles.ruleText, passed ? styles.rulePassed : styles.ruleFailed]}>
+                    {rule.label}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
           <TextInput
             label="邮箱（选填）"
             value={email}
@@ -117,7 +144,30 @@ const styles = StyleSheet.create({
     color: '#1677ff',
   },
   input: {
+    marginBottom: 8,
+  },
+  rulesBox: {
     marginBottom: 12,
+    paddingHorizontal: 4,
+  },
+  ruleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 1,
+  },
+  ruleDot: {
+    fontSize: 13,
+    marginRight: 6,
+    width: 14,
+  },
+  ruleText: {
+    fontSize: 13,
+  },
+  rulePassed: {
+    color: '#52c41a',
+  },
+  ruleFailed: {
+    color: '#bfbfbf',
   },
   button: {
     marginTop: 8,

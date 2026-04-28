@@ -4,6 +4,7 @@ import com.example.kaoyan.entity.KnowledgePoint;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface KnowledgePointRepository extends JpaRepository<KnowledgePoint, Long> {
 
@@ -12,4 +13,6 @@ public interface KnowledgePointRepository extends JpaRepository<KnowledgePoint, 
     List<KnowledgePoint> findByParentId(Long parentId);
 
     List<KnowledgePoint> findByParentIdIsNull();
+
+    Optional<KnowledgePoint> findByNameAndSubject(String name, String subject);
 }

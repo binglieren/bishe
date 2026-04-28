@@ -1,7 +1,13 @@
 package com.example.kaoyan.service;
 
-import com.example.kaoyan.entity.*;
-import com.example.kaoyan.repository.*;
+import com.example.kaoyan.entity.KnowledgePoint;
+import com.example.kaoyan.entity.Question;
+import com.example.kaoyan.entity.User;
+import com.example.kaoyan.repository.ChatSessionRepository;
+import com.example.kaoyan.repository.DocumentRepository;
+import com.example.kaoyan.repository.KnowledgePointRepository;
+import com.example.kaoyan.repository.QuestionRepository;
+import com.example.kaoyan.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -22,8 +28,6 @@ public class AdminService {
 
     private final UserRepository userRepository;
     private final QuestionRepository questionRepository;
-    private final ExamRepository examRepository;
-    private final ExamRecordRepository examRecordRepository;
     private final KnowledgePointRepository knowledgePointRepository;
     private final DocumentRepository documentRepository;
     private final ChatSessionRepository chatSessionRepository;
@@ -38,11 +42,9 @@ public class AdminService {
         Map<String, Object> stats = new HashMap<>();
         stats.put("userCount", userRepository.count());
         stats.put("questionCount", questionRepository.count());
-        stats.put("examCount", examRepository.count());
         stats.put("knowledgePointCount", knowledgePointRepository.count());
         stats.put("documentCount", documentRepository.count());
         stats.put("chatSessionCount", chatSessionRepository.count());
-        stats.put("examRecordCount", examRecordRepository.count());
         return stats;
     }
 
@@ -143,50 +145,6 @@ public class AdminService {
             throw new IllegalArgumentException("题目不存在");
         }
         questionRepository.deleteById(questionId);
-    }
-
-    // ==================== 考试管理 ====================
-
-    /**
-     * 分页查询考试列表
-     */
-    public Page<Exam> getExamList(int page, int size) {
-        return examRepository.findAll(
-                PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt")));
-    }
-
-    /**
-     * 新增考试
-     */
-    @Transactional
-    public Exam createExam(Exam exam) {
-        return examRepository.save(exam);
-    }
-
-    /**
-     * 修改考试
-     */
-    @Transactional
-    public Exam updateExam(Long examId, Exam updated) {
-        Exam exam = examRepository.findById(examId)
-                .orElseThrow(() -> new IllegalArgumentException("考试不存在"));
-        exam.setTitle(updated.getTitle());
-        exam.setSubject(updated.getSubject());
-        exam.setDurationMinutes(updated.getDurationMinutes());
-        exam.setTotalScore(updated.getTotalScore());
-        exam.setDescription(updated.getDescription());
-        return examRepository.save(exam);
-    }
-
-    /**
-     * 删除考试
-     */
-    @Transactional
-    public void deleteExam(Long examId) {
-        if (!examRepository.existsById(examId)) {
-            throw new IllegalArgumentException("考试不存在");
-        }
-        examRepository.deleteById(examId);
     }
 
     // ==================== 知识点管理 ====================

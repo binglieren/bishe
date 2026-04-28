@@ -13,14 +13,16 @@ public interface DocumentChunkRepository extends JpaRepository<DocumentChunk, Lo
     void deleteByDocumentId(Long documentId);
 
     /**
-     * 向量相似度检索：基于 pgvector 的余弦相似度搜索
-     * 返回与查询向量最相似的文档分块
+     * 向量相似度检索（按知识库过滤）：
+     * 只检索 document.knowledge_base_id = :kbId 且 document.enabled = TRUE 的切片
      */
     @Query(value = "SELECT dc.* FROM document_chunk dc " +
             "JOIN document d ON dc.document_id = d.id " +
             "WHERE d.user_id = :userId " +
+            "  AND d.knowledge_base_id = :kbId " +
+            "  AND d.enabled = TRUE " +
             "ORDER BY dc.embedding <=> CAST(:queryVector AS vector) " +
             "LIMIT :limit",
             nativeQuery = true)
-    List<DocumentChunk> findSimilarChunks(Long userId, String queryVector, int limit);
+    List<DocumentChunk> findSimilarChunksInKb(Long userId, Long kbId, String queryVector, int limit);
 }

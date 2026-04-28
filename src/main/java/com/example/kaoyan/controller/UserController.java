@@ -1,5 +1,6 @@
 package com.example.kaoyan.controller;
 
+import com.example.kaoyan.dto.AvatarUploadRequest;
 import com.example.kaoyan.dto.UserInfoDTO;
 import com.example.kaoyan.dto.UserProfileDTO;
 import com.example.kaoyan.entity.CheckIn;
@@ -7,13 +8,16 @@ import com.example.kaoyan.service.UserService;
 import com.example.kaoyan.util.Result;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 用户控制器
@@ -39,6 +43,17 @@ public class UserController {
         Long userId = (Long) auth.getPrincipal();
         userService.updateProfile(userId, dto);
         return Result.success("更新成功");
+    }
+
+    @PostMapping("/avatar")
+    @Operation(summary = "上传/更新头像（base64 字符串）")
+    public Result<Map<String, String>> uploadAvatar(Authentication auth,
+                                                    @Valid @RequestBody AvatarUploadRequest request) {
+        Long userId = (Long) auth.getPrincipal();
+        String saved = userService.uploadAvatar(userId, request.getImage());
+        Map<String, String> payload = new HashMap<>();
+        payload.put("avatar", saved);
+        return Result.successWithMessage("头像更新成功", payload);
     }
 
     @PostMapping("/check-in")
