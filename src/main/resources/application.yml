@@ -49,9 +49,11 @@ llm:
   api-url: https://api.deepseek.com
   model: deepseek-v4-pro
 
-  # ── ② multimodal：DeepSeek V4 Pro（拍照搜题、题目结构化） ──
-  # multimodal 默认与 chat 同 url+key，但模型独立可换；admin 后台可独立配置
-  # （播种代码会用 chat 的 url+key 作为默认，避免重复填）
+  # ── ② multimodal：Qwen-VL (DashScope OpenAI 兼容) ──
+  # 支持图片输入，用于拍照搜题、题目结构化
+  multimodal-model: qwen-vl-max
+  multimodal-api-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  multimodal-api-key: sk-0f77a6941aff43bab6b8d21db90134bf
 
   # ── ③ embedding：通义千问 text-embedding-v4 (DashScope OpenAI 兼容) ──
   # 支持 dimensions = 64/128/256/512/768/1024/1536/2048；DB 列固定 1536，自动请求该维度
@@ -66,11 +68,10 @@ llm:
   audio-api-url: https://dashscope.aliyuncs.com/compatible-mode/v1
   audio-api-key: sk-0f77a6941aff43bab6b8d21db90134bf
 
-  # ── ⑤ tts：CosyVoice (DashScope native HTTP，非 OpenAI 兼容) ──
-  # 端点：/api/v1/services/audio/tts/SpeechSynthesizer
-  # 同步返回的是音频下载 URL（24h 有效），后端会自动二次拉取转 base64 下发
+  # ── ⑤ tts：CosyVoice (DashScope WebSocket SDK) ──
+  # 使用 SpeechSynthesizer WebSocket 协议，直接返回音频字节，无 OSS 下载环节
   # 候选音色：longwan / longxiaochun / longanyang / longxiaobei …（详见 DashScope 文档）
-  tts-model: cosyvoice-v3-flash
+  tts-model: cosyvoice-v3.5-flash
   tts-api-url: https://dashscope.aliyuncs.com/api/v1
   tts-api-key: sk-0f77a6941aff43bab6b8d21db90134bf
 

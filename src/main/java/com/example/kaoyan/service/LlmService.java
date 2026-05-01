@@ -21,7 +21,7 @@ public class LlmService {
     private final AiConfigRepository aiConfigRepository;
     private final SystemApiConfigService systemApiConfigService;
     private final GeminiNativeService geminiNativeService;
-    private final DashScopeNativeService dashScopeNativeService;
+    private final CosyVoiceService cosyVoiceService;
 
     @Value("${llm.api-key}")
     private String defaultApiKey;
@@ -554,16 +554,16 @@ public class LlmService {
 
     /**
      * 文本转语音（TTS）。根据 tts stage 配置的 URL 自动选路：
-     *   · dashscope.aliyuncs.com → CosyVoice (DashScope native)
+     *   · dashscope.aliyuncs.com → CosyVoice WebSocket SDK
      *   · generativelanguage.googleapis.com → Gemini Native TTS
-     *   · 其它 → 默认尝试 Gemini Native（兜底，需要 url 兼容）
+     *   · 其它 → 默认尝试 Gemini Native（兜底）
      *
      * 返回纯 base64（不含 data: 前缀），mime 类型由对应 service 决定。
      */
     public String synthesizeSpeech(String text, String voiceName, Long userId) {
         String url = systemApiConfigService.getApiUrl(SystemApiConfigService.STAGE_TTS);
         if (url != null && url.contains("dashscope.aliyuncs.com")) {
-            return dashScopeNativeService.synthesizeSpeech(text, voiceName);
+            return cosyVoiceService.synthesizeSpeech(text, voiceName);
         }
         return geminiNativeService.synthesizeSpeech(text, voiceName, userId);
     }
@@ -572,8 +572,8 @@ public class LlmService {
     public String getTtsMimeType() {
         String url = systemApiConfigService.getApiUrl(SystemApiConfigService.STAGE_TTS);
         if (url != null && url.contains("dashscope.aliyuncs.com")) {
-            return DashScopeNativeService.mimeType();
+            return CosyVoiceService.mimeType();
         }
-        return "audio/wav"; // Gemini Native 默认封 WAV
+        return "audio/wav";
     }
 }

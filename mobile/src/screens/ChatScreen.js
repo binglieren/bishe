@@ -27,6 +27,8 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
+import * as Clipboard from 'expo-clipboard';
+import MathText from 'react-native-math-view/src/MathText';
 import {
   getMessages,
   sendMessage,
@@ -55,6 +57,10 @@ export default function ChatScreen({ route, navigation }) {
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // 长按弹出小图标栏
+  const [popoverVisible, setPopoverVisible] = useState(false);
+  const [popoverMsg, setPopoverMsg] = useState(null); // { content, role, index }
   const [snackVisible, setSnackVisible] = useState(false);
   const [snackMsg, setSnackMsg] = useState('');
   const [selectedImage, setSelectedImage] = useState(null);
@@ -69,6 +75,8 @@ export default function ChatScreen({ route, navigation }) {
   const recordingRef = useRef(null);                         // ref 版本，给异步流程和卸载使用
   const recordStartTsRef = useRef(0);                        // 录音真实开始时间戳（避免闭包陷阱）
   const willCancelRef = useRef(false);
+  const stoppingRef = useRef(false);                         // 正在停止中，防双击重复 unload
+  const stopPendingRef = useRef(false);                      // 录音未开始就收到停止指令
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   // 消息列表 ref（用于进页面/新消息时自动滚到底部）
@@ -96,6 +104,30 @@ export default function ChatScreen({ route, navigation }) {
       }
     };
   }, []);
+
+  // ── 弹出小图标操作栏（由 ⋮ 按钮触发） ──
+  const showPopover = (item, index) => {
+    if (!item.content) return;
+    setPopoverMsg({ content: item.content, role: item.role, index });
+    setPopoverVisible(true);
+  };
+
+  const dismissPopover = () => {
+    setPopoverVisible(false);
+    setPopoverMsg(null);
+  };
+
+  const handlePopoverFavorite = () => {
+    dismissPopover();
+    setSnackMsg('收藏功能即将上线');
+    setSnackVisible(true);
+  };
+
+  const handlePopoverShare = () => {
+    dismissPopover();
+    setSnackMsg('分享功能即将上线');
+    setSnackVisible(true);
+  };
 
   /**
    * 朗读 / 停止朗读某条 AI 回复。
@@ -211,7 +243,8 @@ export default function ChatScreen({ route, navigation }) {
 
   // ── 录音：按住开始，松开结束 → 上传识别 → 填入输入框 ──
   const startRecording = async () => {
-    if (recordingRef.current) return; // 已在录音中
+    if (recordingRef.current || stoppingRef.current) return; // 已在录音中或正在停止
+    stopPendingRef.current = false;
     try {
       if (Platform.OS === 'web') {
         setSnackMsg('Web 端暂不支持录音，请在手机上使用');
@@ -231,6 +264,14 @@ export default function ChatScreen({ route, navigation }) {
       const rec = new Audio.Recording();
       await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
       await rec.startAsync();
+
+      // 如果在准备录音期间用户已松手，直接停止并退出，防止 UI 卡死在录音状态
+      if (stopPendingRef.current) {
+        await rec.stopAndUnloadAsync().catch(() => {});
+        stopPendingRef.current = false;
+        return;
+      }
+
       recordingRef.current = rec;
       recordStartTsRef.current = Date.now();
       willCancelRef.current = false;
@@ -268,7 +309,18 @@ export default function ChatScreen({ route, navigation }) {
 
   const stopRecording = async ({ cancel = false } = {}) => {
     const rec = recordingRef.current;
-    if (!rec) return;
+    if (!rec) {
+      // 录音尚未开始（startRecording 还在异步准备中），标记让 start 自行取消
+      stopPendingRef.current = true;
+      return;
+    }
+    if (stoppingRef.current) return; // 正在停止中，防止双击重复 unload
+    stoppingRef.current = true;
+
+    // 第一阶段：停止录制并清理录音状态（无论成功与否都要复位）
+    let uri = null;
+    let durSec = 0;
+    let shouldCancel = cancel || willCancelRef.current;
     try {
       if (recordTimerRef.current) {
         clearInterval(recordTimerRef.current);
@@ -278,30 +330,33 @@ export default function ChatScreen({ route, navigation }) {
       pulseAnim.setValue(1);
 
       await rec.stopAndUnloadAsync();
-      const uri = rec.getURI();
-      // 用真实时间戳算时长，避免 PanResponder useRef 闭包读到 0 的旧 state
+      uri = rec.getURI();
       const startTs = recordStartTsRef.current || 0;
       const durMs = startTs > 0 ? Date.now() - startTs : 0;
-      const durSec = durMs / 1000;
-      const shouldCancel = cancel || willCancelRef.current;
+      durSec = durMs / 1000;
+    } catch (e) {
+      // stopAndUnloadAsync 可能因重复调用抛出 "already unloaded"，静默吞下
+    } finally {
       recordingRef.current = null;
       recordStartTsRef.current = 0;
       willCancelRef.current = false;
+      stoppingRef.current = false;
       setIsRecording(false);
       setRecording(null);
       setRecordSec(0);
       setWillCancel(false);
+    }
 
-      if (shouldCancel) return;
-      if (!uri) return;
-      if (durSec < 0.8) {
-        setSnackMsg('录音时间太短，请按住多说一会');
-        setSnackVisible(true);
-        return;
-      }
+    if (shouldCancel || !uri) return;
+    if (durSec < 0.8) {
+      setSnackMsg('录音时间太短，请按住多说一会');
+      setSnackVisible(true);
+      return;
+    }
 
-      // 读取文件为 base64 并上传
-      setIsTranscribing(true);
+    // 第二阶段：上传识别（独立于录音清理，不阻塞按钮恢复）
+    setIsTranscribing(true);
+    try {
       const base64 = await FileSystem.readAsStringAsync(uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
@@ -436,7 +491,8 @@ export default function ChatScreen({ route, navigation }) {
       }
       setMessages((prev) => [...prev, { role: 'assistant', content: res.data.content }]);
     } catch (err) {
-      setSnackMsg('发送失败，请重试');
+      const backendMsg = err?.response?.data?.message;
+      setSnackMsg('发送失败：' + (backendMsg || err?.message || '请重试'));
       setSnackVisible(true);
     } finally {
       setLoading(false);
@@ -448,7 +504,7 @@ export default function ChatScreen({ route, navigation }) {
     const isUser = item.role === 'user';
     const isTtsLoading = ttsLoadingIndex === index;
     const isTtsPlaying = ttsPlayingIndex === index;
-    const ttsAvailable = !isUser && !!item.content && item.content.trim().length > 0;
+    const hasText = !!item.content && item.content.trim().length > 0;
 
     return (
       <View style={[styles.msgRow, isUser ? styles.msgRowUser : styles.msgRowBot]}>
@@ -458,55 +514,74 @@ export default function ChatScreen({ route, navigation }) {
           </View>
         )}
         <View style={styles.msgColumn}>
-          <View
-            style={[
-              styles.msgBubble,
-              isUser ? styles.msgBubbleUser : styles.msgBubbleBot,
-            ]}
-          >
-            {(item._localImageUri || item.imageBase64) && (
-              <Image
-                source={{
-                  uri: item._localImageUri || `data:image/jpeg;base64,${item.imageBase64}`,
-                }}
-                style={styles.msgImage}
-                resizeMode="contain"
-              />
-            )}
-            {!!item.content && (
-              <Text style={[styles.msgText, isUser && styles.msgTextUser]}>
-                {item.content}
-              </Text>
-            )}
-          </View>
-
-          {/* AI 回复下方：朗读按钮（只在有文本内容时显示） */}
-          {ttsAvailable && (
-            <TouchableOpacity
-              onPress={() => handleToggleTts(item.content, index)}
-              disabled={isTtsLoading}
-              activeOpacity={0.7}
+            <View
               style={[
-                styles.ttsBtn,
-                isTtsPlaying && styles.ttsBtnActive,
+                styles.msgBubble,
+                isUser ? styles.msgBubbleUser : styles.msgBubbleBot,
               ]}
             >
-              {isTtsLoading ? (
-                <ActivityIndicator size={12} color={colors.primary} />
-              ) : (
-                <RNText style={styles.ttsBtnIcon}>
-                  {isTtsPlaying ? '⏸' : '🔊'}
-                </RNText>
+              {(item._localImageUri || item.imageBase64) && (
+                <Image
+                  source={{
+                    uri: item._localImageUri || `data:image/jpeg;base64,${item.imageBase64}`,
+                  }}
+                  style={styles.msgImage}
+                  resizeMode="contain"
+                />
               )}
-              <Text
+              {!!item.content && (
+                <MathText
+                  value={item.content}
+                  style={[styles.msgText, isUser && styles.msgTextUser, styles.mathTextWrap]}
+                />
+              )}
+            </View>
+
+          {/* AI 回复下方：复制 + 朗读 + 更多 */}
+          {!isUser && hasText && (
+            <View style={styles.msgActionsRow}>
+              {/* 复制全文 */}
+              <TouchableOpacity
+                onPress={async () => {
+                  await Clipboard.setStringAsync(item.content);
+                  setSnackMsg('已复制');
+                  setSnackVisible(true);
+                }}
+                activeOpacity={0.7}
+                style={styles.msgActionBtn}
+              >
+                <RNText style={styles.msgActionIcon}>📋</RNText>
+              </TouchableOpacity>
+              {/* 朗读 */}
+              <TouchableOpacity
+                onPress={() => handleToggleTts(item.content, index)}
+                disabled={isTtsLoading}
+                activeOpacity={0.7}
                 style={[
-                  styles.ttsBtnText,
-                  isTtsPlaying && styles.ttsBtnTextActive,
+                  styles.msgActionBtn,
+                  isTtsPlaying && styles.msgActionBtnActive,
                 ]}
               >
-                {isTtsLoading ? '加载中…' : isTtsPlaying ? '停止' : '朗读'}
-              </Text>
-            </TouchableOpacity>
+                {isTtsLoading ? (
+                  <ActivityIndicator size={12} color={colors.primary} />
+                ) : (
+                  <RNText style={styles.msgActionIcon}>
+                    {isTtsPlaying ? '⏸' : '🔊'}
+                  </RNText>
+                )}
+              </TouchableOpacity>
+              {/* 更多 */}
+              <TouchableOpacity
+                onPress={() => showPopover(item, index)}
+                activeOpacity={0.7}
+                style={[
+                  styles.msgActionBtn,
+                  popoverVisible && popoverMsg?.index === index && styles.msgActionBtnActive,
+                ]}
+              >
+                <RNText style={styles.msgActionIcon}>⋯</RNText>
+              </TouchableOpacity>
+            </View>
           )}
         </View>
       </View>
@@ -583,6 +658,9 @@ export default function ChatScreen({ route, navigation }) {
           renderItem={renderMessage}
           contentContainerStyle={styles.msgList}
           showsVerticalScrollIndicator={false}
+          // 关闭子视图裁剪，避免 Android 上滚动出屏幕的气泡被回收，
+          // 影响 Text selectable 的长按手势识别
+          removeClippedSubviews={false}
           // 内容尺寸变化时自动贴底：
           //   · 首次加载历史消息 → 立即不带动画跳到底（避免用户看到"从顶滑到底"）
           //   · 后续新增消息    → 平滑滚动到底
@@ -733,6 +811,41 @@ export default function ChatScreen({ route, navigation }) {
         </Dialog>
       </Portal>
 
+      {/* 消息操作弹窗（底部居中） */}
+      <Portal>
+        {popoverVisible && (
+          <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+            <TouchableOpacity
+              style={StyleSheet.absoluteFill}
+              activeOpacity={1}
+              onPress={dismissPopover}
+            >
+              <View />
+            </TouchableOpacity>
+            <View style={styles.popoverWrapper}>
+              <View style={styles.popoverBar}>
+                <TouchableOpacity
+                  style={styles.popoverBtn}
+                  onPress={handlePopoverFavorite}
+                  activeOpacity={0.7}
+                >
+                  <RNText style={styles.popoverIcon}>⭐</RNText>
+                  <RNText style={styles.popoverLabel}>收藏</RNText>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.popoverBtn}
+                  onPress={handlePopoverShare}
+                  activeOpacity={0.7}
+                >
+                  <RNText style={styles.popoverIcon}>📤</RNText>
+                  <RNText style={styles.popoverLabel}>分享</RNText>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+      </Portal>
+
       <Snackbar
         visible={snackVisible}
         onDismiss={() => setSnackVisible(false)}
@@ -858,7 +971,12 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     lineHeight: 22,
   },
-  msgTextUser: { color: '#FFFFFF' },
+  msgTextUser: {
+    color: '#FFFFFF',
+  },
+  mathTextWrap: {
+    marginTop: 2,
+  },
   msgImage: {
     width: 200,
     height: 200,
@@ -866,34 +984,60 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
 
-  // TTS 朗读按钮（AI 回复气泡下方）
-  ttsBtn: {
+  // AI 回复下方操作按钮行（复制 + 朗读）
+  msgActionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
     marginTop: 4,
-    paddingHorizontal: 10,
+    gap: 6,
+  },
+  msgActionBtn: {
+    paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: radii.pill,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.borderLight,
   },
-  ttsBtnActive: {
+  msgActionBtnActive: {
     backgroundColor: colors.primarySoft,
     borderColor: colors.primary,
   },
-  ttsBtnIcon: {
-    fontSize: 12,
-    marginRight: 4,
+  msgActionIcon: {
+    fontSize: 13,
   },
-  ttsBtnText: {
-    fontSize: 11,
+
+  // 弹出操作栏（底部居中）
+  popoverWrapper: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 100,
+    alignItems: 'center',
+  },
+  popoverBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    gap: 2,
+    ...shadows.md,
+  },
+  popoverBtn: {
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.md,
+  },
+  popoverIcon: {
+    fontSize: 22,
+  },
+  popoverLabel: {
+    fontSize: 10,
     color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  ttsBtnTextActive: {
-    color: colors.primary,
+    marginTop: 2,
   },
 
   // Typing indicator

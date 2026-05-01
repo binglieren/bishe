@@ -44,6 +44,10 @@ public class SystemApiConfigService {
     @Value("${llm.api-url:}")        private String defaultChatApiUrl;
     @Value("${llm.model:}")          private String defaultChatModel;
 
+    @Value("${llm.multimodal-api-key:}") private String defaultMultimodalApiKey;
+    @Value("${llm.multimodal-api-url:}") private String defaultMultimodalApiUrl;
+    @Value("${llm.multimodal-model:}")   private String defaultMultimodalModel;
+
     @Value("${llm.embedding-api-key:}") private String defaultEmbeddingApiKey;
     @Value("${llm.embedding-api-url:}") private String defaultEmbeddingApiUrl;
     @Value("${llm.embedding-model:}")   private String defaultEmbeddingModel;
@@ -54,55 +58,107 @@ public class SystemApiConfigService {
 
     @Value("${llm.tts-api-key:}")     private String defaultTtsApiKey;
     @Value("${llm.tts-api-url:}")     private String defaultTtsApiUrl;
-    @Value("${llm.tts-model:gemini-3.1-flash-tts-preview}") private String defaultTtsModel;
+    @Value("${llm.tts-model:cosyvoice-v3.5-flash}") private String defaultTtsModel;
 
     /**
-     * 启动时自动播种：若数据库不存在某 stage，按 yml 默认值新建一条；
-     * 已存在的不动，确保管理员的修改不会被覆盖。
+     * 启动时自动播种：若数据库不存在某 stage，用 yml 默认值新建；
+     * 若已存在但字段为空，则用 yml 补齐（管理员已填的不覆盖）。
      */
     @PostConstruct
     @Transactional
     public void seedDefaults() {
         for (String stage : ALL_STAGES) {
-            if (repository.existsById(stage)) continue;
-            SystemApiConfig c = new SystemApiConfig();
-            c.setStage(stage);
-            c.setEnabled(true);
+            SystemApiConfig c = repository.findById(stage).orElseGet(() -> {
+                SystemApiConfig newC = new SystemApiConfig();
+                newC.setStage(stage);
+                newC.setEnabled(true);
+                return newC;
+            });
+            boolean needsSave = false;
             switch (stage) {
-                case STAGE_CHAT, STAGE_MULTIMODAL -> {
-                    c.setApiUrl(defaultChatApiUrl);
-                    c.setApiKey(defaultChatApiKey);
-                    c.setModel(defaultChatModel);
-                    c.setTemperature(0.7);
-                    c.setMaxTokens(2000);
-                    c.setDescription(stage.equals(STAGE_CHAT)
-                            ? "文本对话（AI 答疑、标题生成、题目打标）"
-                            : "多模态对话（拍照搜题、题目结构化）");
+                case STAGE_CHAT -> {
+                    needsSave |= setIfBlank(c, SystemApiConfig::getApiUrl, SystemApiConfig::setApiUrl, defaultChatApiUrl);
+                    needsSave |= setIfBlank(c, SystemApiConfig::getApiKey, SystemApiConfig::setApiKey, defaultChatApiKey);
+                    needsSave |= setIfBlank(c, SystemApiConfig::getModel, SystemApiConfig::setModel, defaultChatModel);
+                    if (c.getTemperature() == null) { c.setTemperature(0.7); needsSave = true; }
+                    if (c.getMaxTokens() == null) { c.setMaxTokens(2000); needsSave = true; }
+                    if (isBlank(c.getDescription())) { c.setDescription("文本对话（AI 答疑、标题生成、题目打标）"); needsSave = true; }
+                }
+                case STAGE_MULTIMODAL -> {
+                    String multimodalUrl = isBlank(defaultMultimodalApiUrl) ? defaultChatApiUrl : defaultMultimodalApiUrl;
+                    String multimodalKey = isBlank(defaultMultimodalApiKey) ? defaultChatApiKey : defaultMultimodalApiKey;
+                    String multimodalModel = isBlank(defaultMultimodalModel) ? defaultChatModel : defaultMultimodalModel;
+                    // 优先用 setIfBlank；若 DB 存的是旧的 chat 通用值且 yml 有专用配置，则更新
+                    needsSave |= setIfBlank(c, SystemApiConfig::getApiUrl, SystemApiConfig::setApiUrl, multimodalUrl);
+                    needsSave |= setIfBlank(c, SystemApiConfig::getApiKey, SystemApiConfig::setApiKey, multimodalKey);
+                    needsSave |= setIfBlank(c, SystemApiConfig::getModel, SystemApiConfig::setModel, multimodalModel);
+                    needsSave |= setIfFallback(c, SystemApiConfig::getApiUrl, SystemApiConfig::setApiUrl, defaultChatApiUrl, multimodalUrl);
+                    needsSave |= setIfFallback(c, SystemApiConfig::getApiKey, SystemApiConfig::setApiKey, defaultChatApiKey, multimodalKey);
+                    needsSave |= setIfFallback(c, SystemApiConfig::getModel, SystemApiConfig::setModel, defaultChatModel, multimodalModel);
+                    if (c.getTemperature() == null) { c.setTemperature(0.7); needsSave = true; }
+                    if (c.getMaxTokens() == null) { c.setMaxTokens(2000); needsSave = true; }
+                    if (isBlank(c.getDescription())) { c.setDescription("多模态对话（拍照搜题、题目结构化）"); needsSave = true; }
                 }
                 case STAGE_EMBEDDING -> {
-                    // embedding 若 yml 留空则继承 chat
-                    c.setApiUrl(isBlank(defaultEmbeddingApiUrl) ? defaultChatApiUrl : defaultEmbeddingApiUrl);
-                    c.setApiKey(isBlank(defaultEmbeddingApiKey) ? defaultChatApiKey : defaultEmbeddingApiKey);
-                    c.setModel(defaultEmbeddingModel);
-                    c.setDescription("向量化（RAG 检索、文档切片、题目向量化）");
+                    String embUrl = isBlank(defaultEmbeddingApiUrl) ? defaultChatApiUrl : defaultEmbeddingApiUrl;
+                    String embKey = isBlank(defaultEmbeddingApiKey) ? defaultChatApiKey : defaultEmbeddingApiKey;
+                    needsSave |= setIfBlank(c, SystemApiConfig::getApiUrl, SystemApiConfig::setApiUrl, embUrl);
+                    needsSave |= setIfBlank(c, SystemApiConfig::getApiKey, SystemApiConfig::setApiKey, embKey);
+                    needsSave |= setIfBlank(c, SystemApiConfig::getModel, SystemApiConfig::setModel, defaultEmbeddingModel);
+                    needsSave |= setIfFallback(c, SystemApiConfig::getApiUrl, SystemApiConfig::setApiUrl, defaultChatApiUrl, embUrl);
+                    needsSave |= setIfFallback(c, SystemApiConfig::getApiKey, SystemApiConfig::setApiKey, defaultChatApiKey, embKey);
+                    if (isBlank(c.getDescription())) { c.setDescription("向量化（RAG 检索、文档切片、题目向量化）"); needsSave = true; }
                 }
                 case STAGE_AUDIO -> {
-                    // audio 走 Gemini 原生 generateContent，不要把 url 拼成 OpenAI 兼容形态。
-                    // 留空则继承 chat 的 url（再由 GeminiNativeService 自动剥掉 /openai 后缀）。
-                    c.setApiUrl(isBlank(defaultAudioApiUrl) ? defaultChatApiUrl : defaultAudioApiUrl);
-                    c.setApiKey(isBlank(defaultAudioApiKey) ? defaultChatApiKey : defaultAudioApiKey);
-                    c.setModel(defaultAudioModel);
-                    c.setDescription("语音识别（Gemini 原生 generateContent + inlineData）");
+                    String audUrl = isBlank(defaultAudioApiUrl) ? defaultChatApiUrl : defaultAudioApiUrl;
+                    String audKey = isBlank(defaultAudioApiKey) ? defaultChatApiKey : defaultAudioApiKey;
+                    needsSave |= setIfBlank(c, SystemApiConfig::getApiUrl, SystemApiConfig::setApiUrl, audUrl);
+                    needsSave |= setIfBlank(c, SystemApiConfig::getApiKey, SystemApiConfig::setApiKey, audKey);
+                    needsSave |= setIfBlank(c, SystemApiConfig::getModel, SystemApiConfig::setModel, defaultAudioModel);
+                    needsSave |= setIfFallback(c, SystemApiConfig::getApiUrl, SystemApiConfig::setApiUrl, defaultChatApiUrl, audUrl);
+                    needsSave |= setIfFallback(c, SystemApiConfig::getApiKey, SystemApiConfig::setApiKey, defaultChatApiKey, audKey);
+                    if (isBlank(c.getDescription())) { c.setDescription("语音识别（STT 转文字）"); needsSave = true; }
                 }
                 case STAGE_TTS -> {
-                    c.setApiUrl(isBlank(defaultTtsApiUrl) ? defaultChatApiUrl : defaultTtsApiUrl);
-                    c.setApiKey(isBlank(defaultTtsApiKey) ? defaultChatApiKey : defaultTtsApiKey);
-                    c.setModel(defaultTtsModel);
-                    c.setDescription("语音合成（Gemini TTS：Kore/Puck/Zephyr 等 30 种音色）");
+                    String ttsUrl = isBlank(defaultTtsApiUrl) ? defaultChatApiUrl : defaultTtsApiUrl;
+                    String ttsKey = isBlank(defaultTtsApiKey) ? defaultChatApiKey : defaultTtsApiKey;
+                    needsSave |= setIfBlank(c, SystemApiConfig::getApiUrl, SystemApiConfig::setApiUrl, ttsUrl);
+                    needsSave |= setIfBlank(c, SystemApiConfig::getApiKey, SystemApiConfig::setApiKey, ttsKey);
+                    needsSave |= setIfBlank(c, SystemApiConfig::getModel, SystemApiConfig::setModel, defaultTtsModel);
+                    needsSave |= setIfFallback(c, SystemApiConfig::getApiUrl, SystemApiConfig::setApiUrl, defaultChatApiUrl, ttsUrl);
+                    needsSave |= setIfFallback(c, SystemApiConfig::getApiKey, SystemApiConfig::setApiKey, defaultChatApiKey, ttsKey);
+                    if (isBlank(c.getDescription())) { c.setDescription("语音合成（TTS 朗读）"); needsSave = true; }
                 }
             }
-            repository.save(c);
+            if (needsSave) repository.save(c);
         }
+    }
+
+    /** 只在 DB 字段为空时从 yml 填充，保护管理员已配置的值 */
+    private static <T> boolean setIfBlank(SystemApiConfig c,
+            java.util.function.Function<SystemApiConfig, String> getter,
+            java.util.function.BiConsumer<SystemApiConfig, String> setter,
+            String ymlValue) {
+        if (isBlank(getter.apply(c)) && !isBlank(ymlValue)) {
+            setter.accept(c, ymlValue);
+            return true;
+        }
+        return false;
+    }
+
+    /** 若 DB 字段值是旧的通用兜底（继承自 chat），且 yml 有专用值，则更新 */
+    private static <T> boolean setIfFallback(SystemApiConfig c,
+            java.util.function.Function<SystemApiConfig, String> getter,
+            java.util.function.BiConsumer<SystemApiConfig, String> setter,
+            String fallbackValue, String dedicatedValue) {
+        if (isBlank(fallbackValue) || isBlank(dedicatedValue)) return false;
+        if (fallbackValue.equals(dedicatedValue)) return false; // 一样没必要更新
+        String dbVal = getter.apply(c);
+        if (!isBlank(dbVal) && dbVal.equals(fallbackValue)) {
+            setter.accept(c, dedicatedValue);
+            return true;
+        }
+        return false;
     }
 
     // ==================== 管理员接口 ====================
