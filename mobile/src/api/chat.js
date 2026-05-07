@@ -87,6 +87,7 @@ export const sendMessageStream = async (data, onToken, onError, onDone) => {
     // 模拟流式逐字输出
     for (let i = 0; i < content.length; i++) {
       onToken(content[i]);
+      if (i % 3 === 0) await new Promise(r => setTimeout(r, 20)); // 每3字停顿20ms
     }
     onDone();
   } catch (err) {
