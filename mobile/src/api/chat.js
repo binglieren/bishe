@@ -1,4 +1,5 @@
 import request from './request';
+import EventSource from 'react-native-sse';
 
 export const createSession = (title) =>
   request.post('/chat/session', null, { params: { title } });
@@ -63,33 +64,26 @@ export const sendMessageStream = async (data, onToken, onError, onDone) => {
   const tok = await import('@react-native-async-storage/async-storage')
     .then(m => m.default.getItem('token')).catch(() => null);
 
-  const xhr = new XMLHttpRequest();
-  xhr.open('POST', `${baseUrl}/api/chat/send/stream`, true);
-  xhr.setRequestHeader('Content-Type', 'application/json');
-  xhr.timeout = 120000;
+  // 用 POST body 传参，EventSource 不支持 POST，改用 fetch+手动 SSE 解析
+  // react-native-sse 的 EventSource 支持自定义 headers
+  const es = new EventSource(`${baseUrl}/api/chat/send/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ ...data, token: tok || '' }),
+  });
 
-  let lastIndex = 0;
-  xhr.onprogress = () => {
-    const newText = xhr.responseText.substring(lastIndex);
-    lastIndex = xhr.responseText.length;
-    if (!newText) return;
-    const lines = newText.split('\n');
-    for (const line of lines) {
-      if (line.startsWith('data:')) {
-        const raw = line.slice(5).trim();
-        if (!raw || raw === '{}') continue;
-        try { const j = JSON.parse(raw); if (typeof j === 'string') onToken(j); }
-        catch { onToken(raw); }
-      }
+  es.addEventListener('token', (event) => {
+    if (event.data) {
+      try { const j = JSON.parse(event.data); if (typeof j === 'string') onToken(j); }
+      catch { onToken(String(event.data)); }
     }
-  };
+  });
 
-  xhr.onload = () => {
-    if (xhr.status >= 200 && xhr.status < 300) onDone();
-    else onError(new Error(`HTTP ${xhr.status}`));
-  };
-  xhr.onerror = () => onError(new Error('网络错误'));
-  xhr.ontimeout = () => onError(new Error('请求超时'));
-
-  xhr.send(JSON.stringify({ ...data, token: tok || '' }));
+  es.addEventListener('done', () => { es.close(); onDone(); });
+  es.addEventListener('error', (event) => {
+    es.close();
+    onError(new Error(event.message || 'SSE error'));
+  });
 };
