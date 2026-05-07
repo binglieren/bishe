@@ -51,6 +51,7 @@ public class ChatService {
             dto.setId(s.getId());
             dto.setTitle(s.getTitle());
             dto.setKnowledgeBaseId(s.getKnowledgeBaseId());
+            dto.setThinkingEnabled(s.getThinkingEnabled());
             dto.setCreatedAt(s.getCreatedAt());
             dto.setUpdatedAt(s.getUpdatedAt());
 

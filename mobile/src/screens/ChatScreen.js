@@ -59,7 +59,7 @@ export default function ChatScreen({ route, navigation }) {
   const [sessionId, setSessionId] = useState(initialSessionId);
   const [selectedKbId, setSelectedKbId] = useState(initialKbId);
   const [kbList, setKbList] = useState([]);
-  const [thinkingEnabled, setThinkingEnabled] = useState(false);
+  const [thinkingEnabled, setThinkingEnabled] = useState(route?.params?.thinkingEnabled ?? false);
   const [kbDialogVisible, setKbDialogVisible] = useState(false);
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
@@ -293,7 +293,11 @@ export default function ChatScreen({ route, navigation }) {
 
   // 切换深度思考模式
   const handleToggleThinking = async () => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      setSnackMsg('请先发送一条消息建立会话');
+      setSnackVisible(true);
+      return;
+    }
     const newVal = !thinkingEnabled;
     setThinkingEnabled(newVal);
     try {
@@ -609,6 +613,15 @@ export default function ChatScreen({ route, navigation }) {
               }
               return list;
             });
+          },
+          // onSession
+          (sessionData) => {
+            if (sessionData?.sessionId && !sessionId) {
+              setSessionId(sessionData.sessionId);
+            }
+            if (typeof sessionData?.thinkingEnabled === 'boolean') {
+              setThinkingEnabled(sessionData.thinkingEnabled);
+            }
           }
         );
       }

@@ -16,6 +16,7 @@ public class ChatSessionDTO {
     private String lastMessageRole;    // user / assistant
     private Integer messageCount;
     private Long knowledgeBaseId;      // 绑定的知识库 id（null=未绑定）
+    private Boolean thinkingEnabled;    // 深度思考模式开关
     private LocalDateTime updatedAt;
     private LocalDateTime createdAt;
 }

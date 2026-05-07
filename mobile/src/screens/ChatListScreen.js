@@ -121,6 +121,7 @@ export default function ChatListScreen({ navigation }) {
       sessionId: session?.id || null,
       title: session?.title || '新对话',
       knowledgeBaseId: session?.knowledgeBaseId ?? null,
+      thinkingEnabled: session?.thinkingEnabled ?? false,
     });
   };
 

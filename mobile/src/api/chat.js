@@ -63,7 +63,7 @@ export const patchMessageRender = (messageId, payload) =>
  * @param {(err:Error)=>void} onError   错误回调
  * @param {()=>void} onDone            完成回调
  */
-export const sendMessageStream = (data, onToken, onError, onDone) => {
+export const sendMessageStream = (data, onToken, onError, onDone, onSession) => {
   return new Promise((resolve, reject) => {
     const baseUrl = request.defaults.baseURL.replace(/\/api$/, '');
     import('@react-native-async-storage/async-storage')
@@ -73,6 +73,12 @@ export const sendMessageStream = (data, onToken, onError, onDone) => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...data, token: tok || '' }),
+        });
+
+        es.addEventListener('session', (event) => {
+          if (event.data && onSession) {
+            try { onSession(JSON.parse(event.data)); } catch {}
+          }
         });
 
         es.addEventListener('token', (event) => {

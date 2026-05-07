@@ -192,6 +192,8 @@ public class ChatController {
             if (sid == null) {
                 ChatSession session = chatService.createSession(userId, null);
                 sid = session.getId();
+                try { emitter.send(SseEmitter.event().name("session").data(
+                    Map.of("sessionId", sid, "thinkingEnabled", false))); } catch (Exception ex) {}
             }
             // 保存用户消息
             ChatMessage userMsg = new ChatMessage();
