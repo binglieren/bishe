@@ -39,7 +39,7 @@ public class RagMcpTools {
     @Value("${llm.embedding.model}")
     private String embeddingModel;
 
-    /** 1. 语义检索文档片段 */
+    /** 1. 语义检索文档片段（向量 top-10 → 关键词重排序 → top-5） */
     @PostMapping("/search")
     public List<Map<String, Object>> searchKnowledgeBase(@RequestBody Map<String, Object> req) {
         String query = (String) req.getOrDefault("query", "");
@@ -54,23 +54,54 @@ public class RagMcpTools {
 
         String vecStr = vectorToString(queryVec);
 
-        // pgvector 余弦检索 top-10
+        // pgvector 余弦检索 top-15（给重排序留足够候选）
         List<DocumentChunk> chunks;
         if (kbId != null) {
-            chunks = chunkRepo.findSimilarChunksByKbId(kbId, vecStr, 10);
+            chunks = chunkRepo.findSimilarChunksByKbId(kbId, vecStr, 15);
         } else {
-            chunks = chunkRepo.findSimilarChunks(vecStr, 10);
+            chunks = chunkRepo.findSimilarChunks(vecStr, 15);
         }
 
-        return chunks.stream().map(chunk -> {
+        if (chunks.isEmpty()) return List.of();
+
+        // ── 重排序：向量相似度 + 关键词重叠 ──
+        String[] queryWords = query.toLowerCase().split("[\\s，,。！？；：\"'（）\\[\\]《》\\-]+");
+
+        List<Map<String, Object>> scored = new ArrayList<>();
+        for (int i = 0; i < chunks.size(); i++) {
+            DocumentChunk chunk = chunks.get(i);
             Document doc = docRepo.findById(chunk.getDocumentId()).orElse(null);
+
+            // 向量分（位置越靠前分越高，归一化到 0~1）
+            double vectorScore = 1.0 - (double) i / chunks.size();
+
+            // 关键词重叠分
+            String content = chunk.getContent() != null ? chunk.getContent().toLowerCase() : "";
+            int matchCount = 0;
+            for (String w : queryWords) {
+                if (w.length() >= 2 && content.contains(w)) matchCount++;
+            }
+            double keywordScore = queryWords.length > 0
+                ? (double) matchCount / queryWords.length
+                : 0;
+
+            // 组合分（向量占 60%，关键词占 40%）
+            double combinedScore = vectorScore * 0.6 + keywordScore * 0.4;
+
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("content", chunk.getContent());
             item.put("docId", chunk.getDocumentId());
             item.put("docName", doc != null ? doc.getOriginalFilename() : "未知文档");
             item.put("chunkIndex", chunk.getChunkIndex());
-            return item;
-        }).collect(Collectors.toList());
+            item.put("score", Math.round(combinedScore * 100.0) / 100.0);
+            scored.add(item);
+        }
+
+        // 按组合分降序，取 top-5
+        scored.sort((a, b) -> Double.compare(
+            (Double) b.get("score"), (Double) a.get("score")));
+
+        return scored.size() > 5 ? scored.subList(0, 5) : scored;
     }
 
     /** 2. 列出用户知识库 */
