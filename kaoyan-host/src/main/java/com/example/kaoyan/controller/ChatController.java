@@ -183,10 +183,15 @@ public class ChatController {
 
         flux.subscribe(
             token -> {
-                try { emitter.send(SseEmitter.event().name("token").data(token)); }
+                try {
+                    System.out.println("SSE token: " + token);
+                    emitter.send(SseEmitter.event().name("token").data(token));
+                }
                 catch (Exception e) { /* client gone */ }
             },
             error -> {
+                System.err.println("SSE error: " + error.getMessage());
+                error.printStackTrace();
                 try { emitter.send(SseEmitter.event().name("error").data(error.getMessage())); } catch (Exception ex) {}
                 emitter.completeWithError(error);
             },
