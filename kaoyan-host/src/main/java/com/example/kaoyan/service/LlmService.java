@@ -444,13 +444,13 @@ public class LlmService {
         try {
             Map<String, Object> data = streamObjectMapper.readValue(json, Map.class);
             List<Map<String, Object>> choices = (List<Map<String, Object>>) data.get("choices");
-            if (choices == null || choices.isEmpty()) return null;
+            if (choices == null || choices.isEmpty()) return "";
             Map<String, Object> delta = (Map<String, Object>) choices.get(0).get("delta");
-            if (delta == null) return null;
+            if (delta == null) return "";
             Object content = delta.get("content");
-            return content != null ? content.toString() : null;
+            return content != null ? content.toString() : "";
         } catch (Exception e) {
-            return null;
+            return "";
         }
     }
 
