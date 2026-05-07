@@ -9,8 +9,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.core.io.buffer.DataBuffer;
 import reactor.core.publisher.Flux;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -413,12 +415,22 @@ public class LlmService {
                 .header("Authorization", "Bearer " + key)
                 .header("Content-Type", "application/json")
                 .bodyValue(requestBody)
-                .retrieve()
-                .bodyToFlux(String.class)
-                .filter(line -> !line.isBlank() && line.startsWith("data: ") && !line.equals("data: [DONE]"))
-                .map(line -> line.substring(6))
-                .map(this::extractStreamToken)
-                .filter(token -> token != null && !token.isEmpty())
+                .exchangeToFlux(response -> {
+                    if (response.statusCode().is2xxSuccessful()) {
+                        return response.bodyToFlux(DataBuffer.class)
+                                .flatMap(buffer -> {
+                                    byte[] bytes = new byte[buffer.readableByteCount()];
+                                    buffer.read(bytes);
+                                    String chunk = new String(bytes, StandardCharsets.UTF_8);
+                                    return Flux.fromArray(chunk.split("\n"));
+                                })
+                                .filter(line -> !line.isBlank() && line.startsWith("data: ") && !line.equals("data: [DONE]"))
+                                .map(line -> line.substring(6))
+                                .map(this::extractStreamToken)
+                                .filter(token -> token != null && !token.isEmpty());
+                    }
+                    return response.createException().flatMapMany(Flux::error);
+                })
                 .doOnError(e -> {
                     System.err.println("chatStream Flux error: " + e.getMessage());
                     e.printStackTrace();
