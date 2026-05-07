@@ -21,7 +21,6 @@ import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-import reactor.core.publisher.Flux;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -146,14 +145,15 @@ public class ChatController {
     }
 
     @PostMapping(value = "/send/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @Operation(summary = "流式发送消息（SSE）— 逐字返回，token 由 body 传入")
+    @Operation(summary = "流式发送消息（SSE）— token 由 body 传入")
     public SseEmitter sendStream(@RequestBody Map<String, Object> body) {
-        Long userId = extractUserId(body);
-        if (userId == null) throw new RuntimeException("未登录");
-
+        Long userId = extractTokenUserId(body);
+        if (userId == null) throw new RuntimeException("token required");
         SseEmitter emitter = new SseEmitter(300_000L);
+
         final String message = (String) body.get("message");
-        final Long reqSessionId = body.containsKey("sessionId") ? toLong(body.get("sessionId")) : null;
+        final Object sidObj = body.get("sessionId");
+        final Long reqSessionId = sidObj instanceof Number n ? n.longValue() : null;
         final String imageBase64 = (String) body.get("image");
         final boolean hasImage = imageBase64 != null && !imageBase64.isBlank();
 
@@ -165,6 +165,7 @@ public class ChatController {
                     sid = session.getId();
                     emitter.send(SseEmitter.event().name("session").data(Map.of("sessionId", sid)));
                 }
+
                 String aiResponse;
                 if (hasImage) {
                     ChatMessage reply = chatService.sendMessage(userId, sid, message, imageBase64);
@@ -173,6 +174,7 @@ public class ChatController {
                     AgentContext ctx = new AgentContext(userId, String.valueOf(sid));
                     aiResponse = agentOrchestrator.execute(message, ctx);
                 }
+
                 if (aiResponse != null) {
                     for (int i = 0; i < aiResponse.length(); i += 3) {
                         String token = aiResponse.substring(i, Math.min(i + 3, aiResponse.length()));
@@ -186,10 +188,11 @@ public class ChatController {
                 emitter.completeWithError(e);
             }
         });
+
         return emitter;
     }
 
-    private Long extractUserId(Map<String, Object> body) {
+    private Long extractTokenUserId(Map<String, Object> body) {
         try {
             Object tok = body.get("token");
             if (tok == null) return null;
@@ -197,14 +200,7 @@ public class ChatController {
             if (token.startsWith("Bearer ")) token = token.substring(7);
             return jwtUtil.getUserIdFromToken(token);
         } catch (Exception e) {
-        return null;
-    }
-}
+            return null;
         }
     }
-
-    private static Long toLong(Object v) {
-        if (v instanceof Number n) return n.longValue();
-        if (v instanceof String s) { try { return Long.parseLong(s); } catch (NumberFormatException e) {} }
-        return null;
-    }
+}
