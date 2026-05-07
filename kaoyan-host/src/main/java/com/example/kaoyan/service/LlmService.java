@@ -397,6 +397,8 @@ public class LlmService {
         Double temperature = resolveTemperature(userId);
         Integer maxTokens = resolveMaxTokens(userId);
 
+        System.out.println("chatStream: url=" + url + " model=" + model + " maxTokens=" + maxTokens);
+
         Map<String, Object> requestBody = Map.of(
                 "model", model,
                 "messages", messages,
@@ -416,7 +418,11 @@ public class LlmService {
                 .filter(line -> !line.isBlank() && line.startsWith("data: ") && !line.equals("data: [DONE]"))
                 .map(line -> line.substring(6))
                 .map(this::extractStreamToken)
-                .filter(token -> token != null && !token.isEmpty());
+                .filter(token -> token != null && !token.isEmpty())
+                .doOnError(e -> {
+                    System.err.println("chatStream Flux error: " + e.getMessage());
+                    e.printStackTrace();
+                });
     }
 
     private final ObjectMapper streamObjectMapper = new ObjectMapper();
