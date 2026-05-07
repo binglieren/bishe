@@ -42,7 +42,7 @@ public class QuestionExtractionService {
         try {
             // 第一步：调用 LLM 提取结构化题目
             AgentDebugLog.ndjson("H5a", "QuestionExtractionService", "start extraction", "{}");
-            String rawJson = llmService.extractQuestion(imageBase64, aiAnswer, userId);
+            String rawJson = llmService.extractQuestionFromText(aiAnswer, userId);
             // 去掉可能的 markdown 代码块标记
             String json = rawJson
                     .replaceAll("(?s)```json\\s*", "")

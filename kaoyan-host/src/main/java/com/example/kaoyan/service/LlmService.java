@@ -464,6 +464,29 @@ public class LlmService {
     }
 
     /**
+     * 从 AI 解答文本中提取结构化题目（纯文本，不传图片）。
+     * 相比 extractQuestion 少传一次 base64 图，节省 token 和延迟。
+     */
+    public String extractQuestionFromText(String aiAnswer, Long userId) {
+        String systemPrompt = "你是一个题目结构化解析助手。请从AI解答文本中提取题目信息，返回标准JSON。只返回JSON，不含任何其他文字。";
+        String userPrompt = "AI已给出如下解答：\n" + aiAnswer +
+                "\n\n请从这段解答文本中推断并提取题目结构，返回以下JSON（只返回JSON本身，不含markdown标记）：\n" +
+                "{\"type\":\"单选|多选|填空|简答\",\"subject\":\"数学|英语|专业课\"," +
+                "\"content\":\"题目正文（不含选项列表）\"," +
+                "\"options\":[{\"label\":\"A\",\"content\":\"选项内容\",\"isCorrect\":true}]," +
+                "\"answer\":\"正确答案（选择题用字母如A或AB，简答用文字）\"," +
+                "\"analysis\":\"解题分析\"," +
+                "\"knowledgePoints\":[\"知识点名称\"]}\n" +
+                "重要：subject 字段只能取「数学」「英语」「专业课」三者之一。政治、历史、计算机、医学等专业相关题目一律归类为「专业课」。";
+
+        List<Map<String, String>> messages = new ArrayList<>();
+        messages.add(Map.of("role", "system", "content", systemPrompt));
+        messages.add(Map.of("role", "user", "content", userPrompt));
+
+        return chat(messages, userId);
+    }
+
+    /**
      * 用 LLM 为题目打多标签。强制从候选知识点中选，并返回置信度。
      *
      * @param subject         科目（政治/英语/数学/专业课）
