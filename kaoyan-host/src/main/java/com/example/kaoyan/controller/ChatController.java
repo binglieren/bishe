@@ -11,6 +11,7 @@ import com.example.kaoyan.entity.ChatSession;
 import com.example.kaoyan.service.ChatService;
 import com.example.kaoyan.service.LlmService;
 import com.example.kaoyan.util.AgentDebugLog;
+import com.example.kaoyan.util.JwtUtil;
 import com.example.kaoyan.util.Result;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -37,6 +38,7 @@ public class ChatController {
     private final ChatService chatService;
     private final LlmService llmService;
     private final AgentOrchestrator agentOrchestrator;
+    private final JwtUtil jwtUtil;
 
     @PostMapping("/session")
     @Operation(summary = "创建对话会话")
@@ -144,14 +146,15 @@ public class ChatController {
     }
 
     @PostMapping(value = "/send/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @Operation(summary = "流式发送消息（SSE）— 逐字返回")
-    public SseEmitter sendStream(Authentication auth, @Valid @RequestBody ChatRequest request) {
-        Long userId = (Long) auth.getPrincipal();
-        SseEmitter emitter = new SseEmitter(300_000L);
+    @Operation(summary = "流式发送消息（SSE）— 逐字返回，token 由 body 传入")
+    public SseEmitter sendStream(@RequestBody Map<String, Object> body) {
+        Long userId = extractUserId(body);
+        if (userId == null) throw new RuntimeException("未登录");
 
-        final String message = request.getMessage();
-        final Long reqSessionId = request.getSessionId();
-        final String imageBase64 = request.getImage();
+        SseEmitter emitter = new SseEmitter(300_000L);
+        final String message = (String) body.get("message");
+        final Long reqSessionId = body.containsKey("sessionId") ? toLong(body.get("sessionId")) : null;
+        final String imageBase64 = (String) body.get("image");
         final boolean hasImage = imageBase64 != null && !imageBase64.isBlank();
 
         CompletableFuture.runAsync(() -> {
@@ -162,7 +165,6 @@ public class ChatController {
                     sid = session.getId();
                     emitter.send(SseEmitter.event().name("session").data(Map.of("sessionId", sid)));
                 }
-
                 String aiResponse;
                 if (hasImage) {
                     ChatMessage reply = chatService.sendMessage(userId, sid, message, imageBase64);
@@ -171,7 +173,6 @@ public class ChatController {
                     AgentContext ctx = new AgentContext(userId, String.valueOf(sid));
                     aiResponse = agentOrchestrator.execute(message, ctx);
                 }
-
                 if (aiResponse != null) {
                     for (int i = 0; i < aiResponse.length(); i += 3) {
                         String token = aiResponse.substring(i, Math.min(i + 3, aiResponse.length()));
@@ -185,7 +186,23 @@ public class ChatController {
                 emitter.completeWithError(e);
             }
         });
-
         return emitter;
     }
-}
+
+    private Long extractUserId(Map<String, Object> body) {
+        try {
+            Object tok = body.get("token");
+            if (tok == null) return null;
+            String token = tok.toString();
+            if (token.startsWith("Bearer ")) token = token.substring(7);
+            return jwtUtil.getUserIdFromToken(token);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static Long toLong(Object v) {
+        if (v instanceof Number n) return n.longValue();
+        if (v instanceof String s) { try { return Long.parseLong(s); } catch (NumberFormatException e) {} }
+        return null;
+    }
