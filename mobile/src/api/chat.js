@@ -58,42 +58,41 @@ export const patchMessageRender = (messageId, payload) =>
  * @param {(err:Error)=>void} onError   错误回调
  * @param {()=>void} onDone            完成回调
  */
-export const sendMessageStream = (data, onToken, onError, onDone) => {
+export const sendMessageStream = async (data, onToken, onError, onDone) => {
   const baseUrl = request.defaults.baseURL.replace(/\/api$/, '');
+  try {
+    const tok = await import('@react-native-async-storage/async-storage')
+      .then(m => m.default.getItem('token')).catch(() => null);
 
-  return new Promise((resolve, reject) => {
-    const finishWithError = (err) => { onError(err); reject(err); };
-    const finishOk = () => { onDone(); resolve(); };
+    const res = await fetch(`${baseUrl}/api/chat/send/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...data, token: tok || '' }),
+    });
 
-    import('@react-native-async-storage/async-storage')
-      .then(m => m.default.getItem('token'))
-      .catch(() => null)
-      .then(token => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${baseUrl}/api/chat/send/stream`, true);
-        xhr.setRequestHeader('Content-Type', 'application/json');
-        xhr.timeout = 120000;
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
 
-        // token 通过 body 传给后端手动验证
-        const body = { ...data, token: token || '' };
-
-        let lastIndex = 0;
-        xhr.onreadystatechange = () => {
-          if (xhr.readyState === 3 || xhr.readyState === 4) {
-            const newText = xhr.responseText.substring(lastIndex);
-            lastIndex = xhr.responseText.length;
-            if (!newText) return;
-            const lines = newText.split('\n');
-            for (const line of lines) {
-              if (line.startsWith('data:')) {
-                const raw = line.slice(5).trim();
-                if (!raw || raw === '{}') continue;
-                try { const j = JSON.parse(raw); if (typeof j === 'string') onToken(j); }
-                catch { onToken(raw); }
-              }
-            }
-          }
-        };
+    // 批量解析 SSE
+    const lines = text.split('\n');
+    let content = '';
+    for (const line of lines) {
+      if (line.startsWith('data:')) {
+        const raw = line.slice(5).trim();
+        if (!raw || raw === '{}') continue;
+        try { const j = JSON.parse(raw); if (typeof j === 'string') content += j; }
+        catch { content += raw; }
+      }
+    }
+    // 模拟流式逐字输出
+    for (let i = 0; i < content.length; i++) {
+      onToken(content[i]);
+    }
+    onDone();
+  } catch (err) {
+    onError(err);
+  }
+};
 
         xhr.onload = () => {
           if (xhr.status >= 200 && xhr.status < 300) finishOk();

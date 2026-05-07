@@ -45,7 +45,7 @@ jwt:
 #   ① 进 admin 后台「API 配置」页手动改对应 stage；或
 #   ② 执行 DELETE FROM system_api_config; 然后重启后端
 llm:
-  # ── ① chat：DeepSeek V4 Pro（文本对话主力） ──
+  # ── ① chat：DeepSeek-V3 官方模型 ──
   # 适用：AI 答疑文本路径、对话标题生成、题目知识点打标
   api-key: sk-e55e0a57fff842eb8386f6042467cfc4
   api-url: https://api.deepseek.com
