@@ -93,15 +93,3 @@ export const sendMessageStream = async (data, onToken, onError, onDone) => {
     onError(err);
   }
 };
-
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) finishOk();
-          else finishWithError(new Error(`HTTP ${xhr.status}`));
-        };
-        xhr.onerror = () => finishWithError(new Error('网络错误'));
-        xhr.ontimeout = () => finishWithError(new Error('请求超时'));
-        xhr.send(JSON.stringify(body));
-      })
-      .catch(e => finishWithError(e));
-  });
-};
