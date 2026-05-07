@@ -59,31 +59,33 @@ export const patchMessageRender = (messageId, payload) =>
  * @param {(err:Error)=>void} onError   错误回调
  * @param {()=>void} onDone            完成回调
  */
-export const sendMessageStream = async (data, onToken, onError, onDone) => {
-  const baseUrl = request.defaults.baseURL.replace(/\/api$/, '');
-  const tok = await import('@react-native-async-storage/async-storage')
-    .then(m => m.default.getItem('token')).catch(() => null);
+export const sendMessageStream = (data, onToken, onError, onDone) => {
+  return new Promise((resolve, reject) => {
+    const baseUrl = request.defaults.baseURL.replace(/\/api$/, '');
+    import('@react-native-async-storage/async-storage')
+      .then(m => m.default.getItem('token')).catch(() => null)
+      .then(tok => {
+        const es = new EventSource(`${baseUrl}/api/chat/send/stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...data, token: tok || '' }),
+        });
 
-  // 用 POST body 传参，EventSource 不支持 POST，改用 fetch+手动 SSE 解析
-  // react-native-sse 的 EventSource 支持自定义 headers
-  const es = new EventSource(`${baseUrl}/api/chat/send/stream`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ ...data, token: tok || '' }),
-  });
+        es.addEventListener('token', (event) => {
+          if (event.data) {
+            try { const j = JSON.parse(event.data); if (typeof j === 'string') onToken(j); }
+            catch { onToken(String(event.data)); }
+          }
+        });
 
-  es.addEventListener('token', (event) => {
-    if (event.data) {
-      try { const j = JSON.parse(event.data); if (typeof j === 'string') onToken(j); }
-      catch { onToken(String(event.data)); }
-    }
-  });
-
-  es.addEventListener('done', () => { es.close(); onDone(); });
-  es.addEventListener('error', (event) => {
-    es.close();
-    onError(new Error(event.message || 'SSE error'));
+        es.addEventListener('done', () => { es.close(); onDone(); resolve(); });
+        es.addEventListener('error', (event) => {
+          es.close();
+          const err = new Error(event.message || 'SSE error');
+          onError(err);
+          reject(err);
+        });
+      })
+      .catch(e => { onError(e); reject(e); });
   });
 };
