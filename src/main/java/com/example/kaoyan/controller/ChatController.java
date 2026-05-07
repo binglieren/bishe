@@ -84,6 +84,18 @@ public class ChatController {
         return Result.success("删除成功");
     }
 
+    @PatchMapping("/message/{messageId}/render")
+    @Operation(summary = "保存消息的预渲染 HTML（前端 KaTeX 转译完成后回传，跨设备共享）")
+    public Result<Void> patchMessageRender(Authentication auth,
+                                            @PathVariable Long messageId,
+                                            @RequestBody Map<String, String> body) {
+        Long userId = (Long) auth.getPrincipal();
+        String contentHtml = body == null ? null : body.get("contentHtml");
+        String renderMeta = body == null ? null : body.get("renderMeta");
+        chatService.updateMessageRender(userId, messageId, contentHtml, renderMeta);
+        return Result.success(null);
+    }
+
     @PatchMapping("/session/{sessionId}/knowledge-base")
     @Operation(summary = "为对话会话绑定（或解绑）知识库")
     public Result<ChatSession> bindKnowledgeBase(Authentication auth,

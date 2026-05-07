@@ -42,3 +42,11 @@ export const synthesizeSpeech = (text, voiceName) =>
   request.post('/chat/tts', { text, voiceName }, {
     timeout: 60000,
   });
+
+/**
+ * 上传预渲染 HTML（前端 KaTeX 转译完回传给后端，跨设备共享）
+ * @param {number} messageId
+ * @param {{ contentHtml: string, renderMeta: string }} payload
+ */
+export const patchMessageRender = (messageId, payload) =>
+  request.patch(`/chat/message/${messageId}/render`, payload);

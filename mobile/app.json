@@ -25,6 +25,7 @@
     "plugins": [
       "expo-asset",
       "expo-font"
-    ]
+    ],
+    "newArchEnabled": true
   }
 }

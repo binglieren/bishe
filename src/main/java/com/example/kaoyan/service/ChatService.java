@@ -249,6 +249,27 @@ public class ChatService {
     }
 
     /**
+     * 更新消息的预渲染 HTML（前端转译完 LaTeX 后回传，跨设备永久缓存）。
+     *
+     * <p>仅允许该消息所属会话的拥有者更新；非自己的消息抛 IllegalArgumentException
+     * 由 GlobalExceptionHandler 统一返回 400/403。
+     */
+    @Transactional
+    public void updateMessageRender(Long userId, Long messageId,
+                                     String contentHtml, String renderMeta) {
+        ChatMessage msg = chatMessageRepository.findById(messageId)
+                .orElseThrow(() -> new IllegalArgumentException("消息不存在"));
+        ChatSession session = chatSessionRepository.findById(msg.getSessionId())
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
+        if (!session.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("无权更新此消息");
+        }
+        msg.setContentHtml(contentHtml);
+        msg.setRenderMeta(renderMeta);
+        chatMessageRepository.save(msg);
+    }
+
+    /**
      * 将会话绑定到指定知识库（kbId 传 null 可取消绑定）
      */
     @Transactional

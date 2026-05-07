@@ -28,16 +28,21 @@ import * as ImagePicker from 'expo-image-picker';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
 import * as Clipboard from 'expo-clipboard';
-import MathText from 'react-native-math-view/src/MathText';
+// 自实现的 KaTeX-WebView 渲染组件，兼容 RN 0.76 New Architecture / Bridgeless
+// （react-native-math-view 在 Bridgeless 下会抛 "Property 'require' doesn't exist"）
+import { MathText } from '../components/MathText';
 import {
   getMessages,
   sendMessage,
   transcribeAudio,
   synthesizeSpeech,
   bindSessionKnowledgeBase,
+  patchMessageRender,
 } from '../api/chat';
 import { getKnowledgeBases } from '../api/knowledgeBase';
 import { colors, radii, spacing, shadows, typography } from '../theme';
+import { warmupCache, setCached } from '../components/math/mathCache';
+import { prerenderMessage, hasMath } from '../components/math/renderLatex';
 
 /**
  * 二级页面：对话详情
@@ -79,14 +84,16 @@ export default function ChatScreen({ route, navigation }) {
   const stopPendingRef = useRef(false);                      // 录音未开始就收到停止指令
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  // 消息列表 ref（用于进页面/新消息时自动滚到底部）
+  // 消息列表 ref
   const listRef = useRef(null);
-  const hasInitialScrolledRef = useRef(false);
-  const scrollToBottom = (animated = true) => {
-    requestAnimationFrame(() => {
-      try { listRef.current?.scrollToEnd({ animated }); } catch {}
-    });
-  };
+  // 是否已完成首次"贴底"定位（历史消息加载后）
+  const initialScrolledRef = useRef(false);
+  // 上一次的消息条数；条数增加 = 新消息到来 → 滚到底
+  // 这里只跟 messages.length 联动，不再监听 onContentSizeChange，
+  // 避免被 MathText 内 WebView 异步测高反复唤醒造成"上下跳"循环
+  const lastMsgCountRef = useRef(0);
+  // 首次加载 3s 内 onContentSizeChange 触发追底；null = 已关闭
+  const scrollSettleRef = useRef(null);
 
   // ── TTS 朗读状态 ───────────────────────────────
   // 同一时刻只允许一段语音播放；ttsLoadingIndex 表示正在请求音频的消息下标，
@@ -191,6 +198,9 @@ export default function ChatScreen({ route, navigation }) {
 
   // 加载历史消息
   const loadMessages = async (sid) => {
+    // 切换会话时重置滚动标记，让新会话能再次执行首次贴底
+    initialScrolledRef.current = false;
+    lastMsgCountRef.current = 0;
     if (!sid) {
       setMessages([]);
       return;
@@ -198,7 +208,21 @@ export default function ChatScreen({ route, navigation }) {
     setLoadingHistory(true);
     try {
       const res = await getMessages(sid);
-      setMessages(res.data || []);
+      const list = res.data || [];
+      setMessages(list);
+      // 后台预热公式渲染缓存（无 contentHtml 的消息异步渲染 + 补传后端）
+      warmupCache(list, (msg, segments) => {
+        const meta = JSON.stringify(segments);
+        // 将 segments 存入本地缓存
+        setCached(msg.content, segments, 15).catch(() => {});
+        // 补传后端
+        if (msg.id) {
+          patchMessageRender(msg.id, {
+            contentHtml: meta,
+            renderMeta: meta,
+          }).catch(() => {});
+        }
+      }, 15, 4);
     } catch (err) {
       setSnackMsg('加载消息失败');
       setSnackVisible(true);
@@ -208,10 +232,35 @@ export default function ChatScreen({ route, navigation }) {
   };
 
   useEffect(() => {
-    // 切换/进入会话时重置自动滚动标记，让首屏立即跳到底（不带动画）
-    hasInitialScrolledRef.current = false;
     loadMessages(sessionId);
   }, [sessionId]);
+
+  // ── 滚动策略 ───────────────────────────────
+  // · 首次加载：3s 内任何内容尺寸变化都追底（覆盖 WebView 公式段测高窗口）
+  // · 3s 后关闭自动追底，用户自由滑动不受干扰
+  // · 用户发送新消息：立即贴底
+  useEffect(() => {
+    if (messages.length === 0) return;
+    if (!initialScrolledRef.current) {
+      initialScrolledRef.current = true;
+      lastMsgCountRef.current = messages.length;
+      // 首次：立刻滚到底，然后开启 3s 追底窗口
+      requestAnimationFrame(() => {
+        listRef.current?.scrollToEnd({ animated: false });
+      });
+      scrollSettleRef.current = true;
+      const timer = setTimeout(() => {
+        scrollSettleRef.current = null;
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+    if (messages.length > lastMsgCountRef.current) {
+      lastMsgCountRef.current = messages.length;
+      requestAnimationFrame(() => {
+        listRef.current?.scrollToEnd({ animated: true });
+      });
+    }
+  }, [messages.length]);
 
   // 加载用户的知识库列表（用于顶部选择器）
   useEffect(() => {
@@ -489,7 +538,24 @@ export default function ChatScreen({ route, navigation }) {
           bindSessionKnowledgeBase(newSid, selectedKbId).catch(() => {});
         }
       }
-      setMessages((prev) => [...prev, { role: 'assistant', content: res.data.content }]);
+      const aiContent = res.data.content;
+      const aiId = res.data.id;
+      setMessages((prev) => [...prev, { role: 'assistant', content: aiContent, id: aiId }]);
+
+      // 公式预渲染 + 双写缓存（后台，不阻塞 UI）
+      if (aiContent && hasMath(aiContent)) {
+        (async () => {
+          const segs = prerenderMessage(aiContent, 15);
+          setCached(aiContent, segs, 15).catch(() => {});
+          if (aiId) {
+            const meta = JSON.stringify(segs);
+            patchMessageRender(aiId, {
+              contentHtml: meta,
+              renderMeta: meta,
+            }).catch(() => {});
+          }
+        })();
+      }
     } catch (err) {
       const backendMsg = err?.response?.data?.message;
       setSnackMsg('发送失败：' + (backendMsg || err?.message || '请重试'));
@@ -499,7 +565,7 @@ export default function ChatScreen({ route, navigation }) {
     }
   };
 
-  // 消息气泡
+  // 消息气泡（正向 FlatList，index 即时序索引）
   const renderMessage = ({ item, index }) => {
     const isUser = item.role === 'user';
     const isTtsLoading = ttsLoadingIndex === index;
@@ -508,12 +574,7 @@ export default function ChatScreen({ route, navigation }) {
 
     return (
       <View style={[styles.msgRow, isUser ? styles.msgRowUser : styles.msgRowBot]}>
-        {!isUser && (
-          <View style={styles.botAvatar}>
-            <RNText style={{ fontSize: 16 }}>🤖</RNText>
-          </View>
-        )}
-        <View style={styles.msgColumn}>
+        <View style={[styles.msgColumn, !isUser && styles.msgColumnBot]}>
             <View
               style={[
                 styles.msgBubble,
@@ -533,6 +594,7 @@ export default function ChatScreen({ route, navigation }) {
                 <MathText
                   value={item.content}
                   style={[styles.msgText, isUser && styles.msgTextUser, styles.mathTextWrap]}
+                  contentHtml={item.contentHtml}
                 />
               )}
             </View>
@@ -653,25 +715,28 @@ export default function ChatScreen({ route, navigation }) {
       ) : (
         <FlatList
           ref={listRef}
+          // 正向渲染：data[0] = 最早消息，data[length-1] = 最新消息
+          // 滚动到底部由 useEffect 监听 messages.length 触发，不再用 inverted。
+          // 之所以不用 inverted —— 长按 Text 拉起 selection handles 时，
+          // Android textActionMode 弹起会让父级布局抖动，inverted 列表反向重算
+          // contentOffset 会出现"位置跳走"的视觉错位。
           data={messages}
-          keyExtractor={(_, idx) => String(idx)}
+          keyExtractor={(_, idx) => `m-${idx}`}
           renderItem={renderMessage}
           contentContainerStyle={styles.msgList}
           showsVerticalScrollIndicator={false}
           // 关闭子视图裁剪，避免 Android 上滚动出屏幕的气泡被回收，
           // 影响 Text selectable 的长按手势识别
           removeClippedSubviews={false}
-          // 内容尺寸变化时自动贴底：
-          //   · 首次加载历史消息 → 立即不带动画跳到底（避免用户看到"从顶滑到底"）
-          //   · 后续新增消息    → 平滑滚动到底
+          // 显式禁用自动 inset 调整（iOS），避免 selection toolbar 弹起时
+          // FlatList 因 safeAreaInset 重算而瞬间偏移
+          contentInsetAdjustmentBehavior="never"
+          // 首次加载 3s 内，WebView 公式段测高导致内容尺寸变化时自动追底
+          // 3s 后停止 → 用户自由滑动不再受任何自动滚动干扰
           onContentSizeChange={() => {
-            const animated = hasInitialScrolledRef.current;
-            scrollToBottom(animated);
-            hasInitialScrolledRef.current = true;
-          }}
-          // 屏幕方向 / 软键盘弹出导致布局变化时，也保持贴底
-          onLayout={() => {
-            if (hasInitialScrolledRef.current) scrollToBottom(false);
+            if (scrollSettleRef.current != null) {
+              listRef.current?.scrollToEnd({ animated: false });
+            }
           }}
         />
       )}
@@ -941,15 +1006,12 @@ const styles = StyleSheet.create({
   msgRow: { flexDirection: 'row', marginBottom: spacing.md, alignItems: 'flex-end' },
   msgRowUser: { justifyContent: 'flex-end' },
   msgRowBot: { justifyContent: 'flex-start' },
-  botAvatar: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: colors.primarySoft,
-    alignItems: 'center', justifyContent: 'center',
-    marginRight: 6,
-  },
   msgColumn: {
     maxWidth: '78%',
     flexShrink: 1,
+  },
+  msgColumnBot: {
+    maxWidth: '100%',
   },
   msgBubble: {
     paddingHorizontal: 12,
