@@ -1,0 +1,79 @@
+# 考研助手 — Docker Compose 部署
+# 使用: docker-compose up -d
+# 前提: 先执行 mvn package -DskipTests 生成各模块 jar
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: kaoyan-db
+    environment:
+      POSTGRES_DB: kaoyan
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123456
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  host:
+    build: ./kaoyan-host
+    container_name: kaoyan-host
+    ports:
+      - "8088:8088"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/kaoyan
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: 123456
+      MCP_RAG_URL: http://rag:8091
+      MCP_QUESTION_URL: http://question:8092
+      MCP_KNOWLEDGE_URL: http://knowledge:8093
+
+  rag:
+    build: ./kaoyan-rag-server
+    container_name: kaoyan-rag
+    ports:
+      - "8091:8091"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/kaoyan
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: 123456
+
+  question:
+    build: ./kaoyan-question-server
+    container_name: kaoyan-question
+    ports:
+      - "8092:8092"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/kaoyan
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: 123456
+
+  knowledge:
+    build: ./kaoyan-knowledge-server
+    container_name: kaoyan-knowledge
+    ports:
+      - "8093:8093"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/kaoyan
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: 123456
+
+volumes:
+  pgdata:
