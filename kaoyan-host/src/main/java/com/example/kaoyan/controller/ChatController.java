@@ -175,17 +175,42 @@ public class ChatController {
             });
         } else {
             System.out.println("SSE path: text, userId=" + userId + " message=" + (message != null ? message.substring(0, Math.min(20, message.length())) : "null"));
+
+            // 先创建 session + 保存用户消息
+            Long sid = reqSessionId;
+            if (sid == null) {
+                ChatSession session = chatService.createSession(userId, null);
+                sid = session.getId();
+            }
+            // 保存用户消息
+            ChatMessage userMsg = new ChatMessage();
+            userMsg.setSessionId(sid);
+            userMsg.setRole("user");
+            userMsg.setContent(message);
+            chatService.saveMessage(userMsg);
+
+            final Long finalSid = sid;
+            StringBuilder fullResponse = new StringBuilder();
+
             List<Map<String, String>> messages = new ArrayList<>();
             messages.add(Map.of("role", "system", "content", llmService.resolveSystemPrompt(userId)));
             messages.add(Map.of("role", "user", "content", message));
-            flux = llmService.chatStream(messages, userId);
+            flux = llmService.chatStream(messages, userId)
+                .doOnNext(token -> fullResponse.append(token))
+                .doOnComplete(() -> {
+                    // 保存 AI 回复
+                    ChatMessage aiMsg = new ChatMessage();
+                    aiMsg.setSessionId(finalSid);
+                    aiMsg.setRole("assistant");
+                    aiMsg.setContent(fullResponse.toString());
+                    chatService.saveMessage(aiMsg);
+                });
         }
 
         System.out.println("SSE: about to subscribe flux");
         flux.subscribe(
             token -> {
                 try {
-                    System.out.println("SSE token: " + token);
                     emitter.send(SseEmitter.event().name("token").data(token));
                 }
                 catch (Exception e) { /* client gone */ }

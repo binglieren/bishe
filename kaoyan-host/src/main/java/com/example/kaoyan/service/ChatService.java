@@ -284,4 +284,9 @@ public class ChatService {
         session.setKnowledgeBaseId(kbId);
         return chatSessionRepository.save(session);
     }
+
+    @Transactional
+    public ChatMessage saveMessage(ChatMessage msg) {
+        return chatMessageRepository.save(msg);
+    }
 }
