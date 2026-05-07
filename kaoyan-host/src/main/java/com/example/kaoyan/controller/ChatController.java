@@ -144,40 +144,38 @@ public class ChatController {
     }
 
     @PostMapping(value = "/send/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @Operation(summary = "流式发送消息（SSE）— 逐 token 返回")
+    @Operation(summary = "流式发送消息（SSE）— 逐字返回")
     public SseEmitter sendStream(Authentication auth, @Valid @RequestBody ChatRequest request) {
         Long userId = (Long) auth.getPrincipal();
         SseEmitter emitter = new SseEmitter(300_000L);
 
-        String message = request.getMessage();
-        Long sessionId = request.getSessionId();
-        boolean hasImage = request.getImage() != null && !request.getImage().isBlank();
+        final String message = request.getMessage();
+        final Long reqSessionId = request.getSessionId();
+        final String imageBase64 = request.getImage();
+        final boolean hasImage = imageBase64 != null && !imageBase64.isBlank();
 
-        // Async 执行 → 不阻塞线程
         CompletableFuture.runAsync(() -> {
+            Long sid = reqSessionId;
             try {
-                // 创建 session
-                if (sessionId == null) {
+                if (sid == null) {
                     ChatSession session = chatService.createSession(userId, null);
-                    sessionId = session.getId();
-                    emitter.send(SseEmitter.event().name("session").data(Map.of("sessionId", sessionId)));
+                    sid = session.getId();
+                    emitter.send(SseEmitter.event().name("session").data(Map.of("sessionId", sid)));
                 }
 
                 String aiResponse;
                 if (hasImage) {
-                    ChatMessage reply = chatService.sendMessage(userId, sessionId, message, request.getImage());
+                    ChatMessage reply = chatService.sendMessage(userId, sid, message, imageBase64);
                     aiResponse = reply.getContent();
                 } else {
-                    AgentContext ctx = new AgentContext(userId, String.valueOf(sessionId));
+                    AgentContext ctx = new AgentContext(userId, String.valueOf(sid));
                     aiResponse = agentOrchestrator.execute(message, ctx);
                 }
 
-                // 流式逐字发送
                 if (aiResponse != null) {
-                    for (int i = 0; i < aiResponse.length(); i++) {
+                    for (int i = 0; i < aiResponse.length(); i += 3) {
                         String token = aiResponse.substring(i, Math.min(i + 3, aiResponse.length()));
                         emitter.send(SseEmitter.event().name("token").data(token));
-                        i += 2; // 每次发 3 个字符
                     }
                 }
                 emitter.send(SseEmitter.event().name("done").data(Map.of()));
