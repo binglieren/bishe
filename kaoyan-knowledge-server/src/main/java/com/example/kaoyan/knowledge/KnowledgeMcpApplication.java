@@ -5,7 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
-@SpringBootApplication(scanBasePackages = "com.example.kaoyan")
+@SpringBootApplication(scanBasePackages = "com.example.kaoyan.knowledge")
 @EntityScan("com.example.kaoyan.entity")
 @EnableJpaRepositories("com.example.kaoyan.repository")
 public class KnowledgeMcpApplication {

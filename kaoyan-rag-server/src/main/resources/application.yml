@@ -1,11 +1,18 @@
-server.port=8091
+server:
+  port: 8091
 
-spring.datasource.url=jdbc:postgresql://localhost:5432/kaoyan
-spring.datasource.username=postgres
-spring.datasource.password=123456
-spring.datasource.driver-class-name=org.postgresql.Driver
-spring.jpa.hibernate.ddl-auto=validate
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/kaoyan
+    username: postgres
+    password: 123456
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
 
-llm.embedding.api-url=https://dashscope.aliyuncs.com/compatible-mode/v1
-llm.embedding.api-key=sk-0f77a6941aff43bab6b8d21db90134bf
-llm.embedding.model=text-embedding-v4
+llm:
+  embedding:
+    api-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api-key: sk-0f77a6941aff43bab6b8d21db90134bf
+    model: text-embedding-v4
