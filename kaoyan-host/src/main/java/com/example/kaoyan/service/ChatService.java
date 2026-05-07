@@ -289,4 +289,17 @@ public class ChatService {
     public ChatMessage saveMessage(ChatMessage msg) {
         return chatMessageRepository.save(msg);
     }
+
+    @Transactional
+    public ChatSession toggleThinking(Long userId, Long sessionId, boolean enabled) {
+        ChatSession session = chatSessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
+        if (!session.getUserId().equals(userId)) throw new IllegalArgumentException("无权操作");
+        session.setThinkingEnabled(enabled);
+        return chatSessionRepository.save(session);
+    }
+
+    public ChatSession getSession(Long sessionId) {
+        return chatSessionRepository.findById(sessionId).orElse(null);
+    }
 }

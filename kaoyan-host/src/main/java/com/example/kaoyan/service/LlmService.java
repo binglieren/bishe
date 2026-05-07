@@ -14,6 +14,7 @@ import reactor.core.publisher.Flux;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -342,6 +343,10 @@ public class LlmService {
     }
 
     public String chat(List<Map<String, String>> messages, Long userId) {
+        return chat(messages, userId, false);
+    }
+
+    public String chat(List<Map<String, String>> messages, Long userId, boolean thinkingEnabled) {
         String url = resolveApiUrl(userId);
         String key = resolveApiKey(userId);
         String model = resolveChatModel(userId);
@@ -350,12 +355,14 @@ public class LlmService {
 
         WebClient client = webClientBuilder.codecs(c -> c.defaultCodecs().maxInMemorySize(25 * 1024 * 1024)).baseUrl(url).build();
 
-        Map<String, Object> requestBody = Map.of(
-                "model", model,
-                "messages", messages,
-                "temperature", temperature,
-                "max_tokens", maxTokens
-        );
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("model", model);
+        requestBody.put("messages", messages);
+        requestBody.put("temperature", temperature);
+        requestBody.put("max_tokens", maxTokens);
+        if (thinkingEnabled) {
+            requestBody.put("thinking", Map.of("type", "enabled"));
+        }
 
         Map response;
         try {
@@ -393,21 +400,28 @@ public class LlmService {
      * 流式 chat（SSE）。返回 Flux<String>，每个元素是一个 token。
      */
     public Flux<String> chatStream(List<Map<String, String>> messages, Long userId) {
+        return chatStream(messages, userId, false);
+    }
+
+    /** 流式 chat + thinking 模式 */
+    public Flux<String> chatStream(List<Map<String, String>> messages, Long userId, boolean thinkingEnabled) {
         String url = resolveApiUrl(userId);
         String key = resolveApiKey(userId);
         String model = resolveChatModel(userId);
         Double temperature = resolveTemperature(userId);
         Integer maxTokens = resolveMaxTokens(userId);
 
-        System.out.println("chatStream: url=" + url + " model=" + model + " maxTokens=" + maxTokens);
+        System.out.println("chatStream: url=" + url + " model=" + model + " maxTokens=" + maxTokens + " thinking=" + thinkingEnabled);
 
-        Map<String, Object> requestBody = Map.of(
-                "model", model,
-                "messages", messages,
-                "temperature", temperature,
-                "max_tokens", maxTokens,
-                "stream", true
-        );
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("model", model);
+        requestBody.put("messages", messages);
+        requestBody.put("temperature", temperature);
+        requestBody.put("max_tokens", maxTokens);
+        requestBody.put("stream", true);
+        if (thinkingEnabled) {
+            requestBody.put("thinking", Map.of("type", "enabled"));
+        }
 
         return webClientBuilder.codecs(c -> c.defaultCodecs().maxInMemorySize(25 * 1024 * 1024)).baseUrl(url).build()
                 .post()

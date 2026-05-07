@@ -38,6 +38,7 @@ import {
   transcribeAudio,
   synthesizeSpeech,
   bindSessionKnowledgeBase,
+  toggleThinking,
   patchMessageRender,
 } from '../api/chat';
 import { getKnowledgeBases } from '../api/knowledgeBase';
@@ -58,6 +59,7 @@ export default function ChatScreen({ route, navigation }) {
   const [sessionId, setSessionId] = useState(initialSessionId);
   const [selectedKbId, setSelectedKbId] = useState(initialKbId);
   const [kbList, setKbList] = useState([]);
+  const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [kbDialogVisible, setKbDialogVisible] = useState(false);
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
@@ -286,6 +288,18 @@ export default function ChatScreen({ route, navigation }) {
         setSnackMsg(err.message || '切换知识库失败');
         setSnackVisible(true);
       }
+    }
+  };
+
+  // 切换深度思考模式
+  const handleToggleThinking = async () => {
+    if (!sessionId) return;
+    const newVal = !thinkingEnabled;
+    setThinkingEnabled(newVal);
+    try {
+      await toggleThinking(sessionId, newVal);
+    } catch (err) {
+      setThinkingEnabled(!newVal);
     }
   };
 
@@ -714,6 +728,16 @@ export default function ChatScreen({ route, navigation }) {
           </Text>
           <RNText style={styles.kbChipChevron}>⌄</RNText>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.thinkingChip, thinkingEnabled && styles.thinkingChipActive]}
+          activeOpacity={0.75}
+          onPress={handleToggleThinking}
+        >
+          <RNText style={styles.thinkingChipIcon}>{thinkingEnabled ? '🧠' : '💡'}</RNText>
+          <Text style={[styles.thinkingChipText, thinkingEnabled && styles.thinkingChipTextActive]}>
+            {thinkingEnabled ? '深度思考' : '普通模式'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {loadingHistory ? (
@@ -970,6 +994,9 @@ const styles = StyleSheet.create({
 
   // 顶部知识库接入栏
   kbBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
     paddingBottom: spacing.sm,
@@ -1007,6 +1034,28 @@ const styles = StyleSheet.create({
     marginLeft: 6,
     marginTop: -2,
   },
+
+  thinkingChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  thinkingChipActive: {
+    borderColor: colors.warning,
+    backgroundColor: colors.warningSoft,
+  },
+  thinkingChipIcon: { fontSize: 14, marginRight: 4 },
+  thinkingChipText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  thinkingChipTextActive: { color: '#92400E' },
 
 
   // Empty

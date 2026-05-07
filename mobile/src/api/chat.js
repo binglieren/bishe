@@ -21,6 +21,10 @@ export const bindSessionKnowledgeBase = (sessionId, knowledgeBaseId) =>
     knowledgeBaseId: knowledgeBaseId ?? null,
   });
 
+// 切换深度思考模式
+export const toggleThinking = (sessionId, thinkingEnabled) =>
+  request.patch(`/chat/session/${sessionId}/thinking`, { thinkingEnabled });
+
 /**
  * 语音识别：上传录音 base64，返回识别出的文字
  * @param {string} audio   录音文件 base64（不含 data: 前缀）

@@ -29,6 +29,10 @@ public class ChatSession {
     @Column(name = "knowledge_base_id")
     private Long knowledgeBaseId;
 
+    /** 深度思考模式：下一条消息是否启用 thinking */
+    @Column(name = "thinking_enabled")
+    private Boolean thinkingEnabled;
+
     @CreationTimestamp
     @Column(name = "created_at")
     private LocalDateTime createdAt;

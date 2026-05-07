@@ -114,6 +114,17 @@ public class ChatController {
                 chatService.bindKnowledgeBase(userId, sessionId, kbId));
     }
 
+    @PatchMapping("/session/{sessionId}/thinking")
+    @Operation(summary = "切换会话的深度思考模式")
+    public Result<ChatSession> toggleThinking(Authentication auth,
+                                               @PathVariable Long sessionId,
+                                               @RequestBody Map<String, Boolean> body) {
+        Long userId = (Long) auth.getPrincipal();
+        boolean enabled = body != null && Boolean.TRUE.equals(body.get("thinkingEnabled"));
+        return Result.successWithMessage(enabled ? "已开启深度思考" : "已关闭深度思考",
+                chatService.toggleThinking(userId, sessionId, enabled));
+    }
+
     @PostMapping("/transcribe")
     @Operation(summary = "语音识别：将录音转为文字")
     public Result<Map<String, String>> transcribe(Authentication auth,
@@ -192,10 +203,16 @@ public class ChatController {
             final Long finalSid = sid;
             StringBuilder fullResponse = new StringBuilder();
 
+            boolean thinking = false;
+            ChatSession session = chatService.getSession(sid);
+            if (session != null && Boolean.TRUE.equals(session.getThinkingEnabled())) {
+                thinking = true;
+            }
+
             List<Map<String, String>> messages = new ArrayList<>();
             messages.add(Map.of("role", "system", "content", llmService.resolveSystemPrompt(userId)));
             messages.add(Map.of("role", "user", "content", message));
-            flux = llmService.chatStream(messages, userId)
+            flux = llmService.chatStream(messages, userId, thinking)
                 .doOnNext(token -> fullResponse.append(token))
                 .doOnComplete(() -> {
                     // 保存 AI 回复
