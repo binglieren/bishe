@@ -58,50 +58,49 @@ export const patchMessageRender = (messageId, payload) =>
  * @param {(err:Error)=>void} onError   错误回调
  * @param {()=>void} onDone            完成回调
  */
-export const sendMessageStream = async (data, onToken, onError, onDone) => {
-  const token = await import('@react-native-async-storage/async-storage')
-    .then(m => m.default.getItem('token')).catch(() => null);
+export const sendMessageStream = (data, onToken, onError, onDone) => {
   const baseUrl = request.defaults.baseURL.replace(/\/api$/, '');
 
-  const xhr = new XMLHttpRequest();
-  xhr.open('POST', `${baseUrl}/api/chat/send/stream`, true);
-  xhr.setRequestHeader('Content-Type', 'application/json');
-  if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-  xhr.responseType = '';
+  return new Promise((resolve, reject) => {
+    const finishWithError = (err) => { onError(err); reject(err); };
+    const finishOk = () => { onDone(); resolve(); };
 
-  let lastIndex = 0;
+    import('@react-native-async-storage/async-storage')
+      .then(m => m.default.getItem('token'))
+      .catch(() => null)
+      .then(token => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${baseUrl}/api/chat/send/stream`, true);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        xhr.timeout = 120000;
 
-  xhr.onprogress = () => {
-    const newText = xhr.responseText.substring(lastIndex);
-    lastIndex = xhr.responseText.length;
-    if (!newText) return;
+        let lastIndex = 0;
+        xhr.onreadystatechange = () => {
+          if (xhr.readyState === 3 || xhr.readyState === 4) {
+            const newText = xhr.responseText.substring(lastIndex);
+            lastIndex = xhr.responseText.length;
+            if (!newText) return;
+            const lines = newText.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('data:')) {
+                const raw = line.slice(5).trim();
+                if (!raw || raw === '{}') continue;
+                try { const j = JSON.parse(raw); if (typeof j === 'string') onToken(j); }
+                catch { onToken(raw); }
+              }
+            }
+          }
+        };
 
-    // SSE 格式: event:xxx\ndata:xxx\n\n
-    const lines = newText.split('\n');
-    for (const line of lines) {
-      if (line.startsWith('data:')) {
-        const raw = line.slice(5).trim();
-        if (!raw || raw === '{}') continue;
-        try {
-          const json = JSON.parse(raw);
-          if (typeof json === 'string') onToken(json);
-        } catch {
-          onToken(raw);
-        }
-      }
-    }
-  };
-
-  xhr.onload = () => {
-    if (xhr.status >= 200 && xhr.status < 300) {
-      onDone();
-    } else {
-      onError(new Error(`HTTP ${xhr.status}`));
-    }
-  };
-
-  xhr.onerror = () => onError(new Error('网络错误'));
-  xhr.ontimeout = () => onError(new Error('请求超时'));
-  xhr.timeout = 120000;
-  xhr.send(JSON.stringify(data));
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) finishOk();
+          else finishWithError(new Error(`HTTP ${xhr.status}`));
+        };
+        xhr.onerror = () => finishWithError(new Error('网络错误'));
+        xhr.ontimeout = () => finishWithError(new Error('请求超时'));
+        xhr.send(JSON.stringify(data));
+      })
+      .catch(e => finishWithError(e));
+  });
 };

@@ -144,59 +144,50 @@ public class ChatController {
     }
 
     @PostMapping(value = "/send/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @Operation(summary = "流式发送消息（SSE）— 逐 token 返回 + Agent 切换事件")
+    @Operation(summary = "流式发送消息（SSE）— 逐 token 返回")
     public SseEmitter sendStream(Authentication auth, @Valid @RequestBody ChatRequest request) {
         Long userId = (Long) auth.getPrincipal();
-        SseEmitter emitter = new SseEmitter(300_000L); // 5 分钟超时
+        SseEmitter emitter = new SseEmitter(300_000L);
 
-        String userMessage = request.getMessage();
+        String message = request.getMessage();
         Long sessionId = request.getSessionId();
+        boolean hasImage = request.getImage() != null && !request.getImage().isBlank();
 
-        // 1. 先创建/确认 session（复用 ChatService）
-        if (sessionId == null) {
-            ChatSession session = chatService.createSession(userId, null);
-            sessionId = session.getId();
-            // 通知前端 sessionId
-            try { emitter.send(SseEmitter.event().name("session").data(Map.of("sessionId", sessionId))); } catch (Exception e) {}
-        }
-
-        // 2. 保存用户消息
-        String imageBase64 = request.getImage();
-        boolean hasImage = imageBase64 != null && !imageBase64.isBlank();
-
-        // 3. 流式处理
-        if (hasImage) {
-            // 图片消息暂时用同步，然后用 SSE 一次性返回
-            ChatMessage reply = chatService.sendMessage(userId, sessionId, userMessage, imageBase64);
-            CompletableFuture.runAsync(() -> {
-                try {
-                    emitter.send(SseEmitter.event().name("token").data(reply.getContent()));
-                    emitter.send(SseEmitter.event().name("done").data(Map.of()));
-                    emitter.complete();
-                } catch (Exception e) {
-                    emitter.completeWithError(e);
+        // Async 执行 → 不阻塞线程
+        CompletableFuture.runAsync(() -> {
+            try {
+                // 创建 session
+                if (sessionId == null) {
+                    ChatSession session = chatService.createSession(userId, null);
+                    sessionId = session.getId();
+                    emitter.send(SseEmitter.event().name("session").data(Map.of("sessionId", sessionId)));
                 }
-            });
-        } else {
-            // Agent 流式
-            AgentContext ctx = new AgentContext(userId, String.valueOf(sessionId));
-            Flux<String> stream = llmService.chatStream(
-                List.of(Map.of("role", "user", "content", userMessage)), userId);
-            emitter.onCompletion(stream::blockLast);
-            stream.subscribe(
-                token -> {
-                    try { emitter.send(SseEmitter.event().name("token").data(token)); }
-                    catch (Exception e) { /* 客户端断开 */ }
-                },
-                error -> emitter.completeWithError(error),
-                () -> {
-                    try {
-                        emitter.send(SseEmitter.event().name("done").data(Map.of()));
-                        emitter.complete();
-                    } catch (Exception e) { /* ignore */ }
+
+                String aiResponse;
+                if (hasImage) {
+                    ChatMessage reply = chatService.sendMessage(userId, sessionId, message, request.getImage());
+                    aiResponse = reply.getContent();
+                } else {
+                    AgentContext ctx = new AgentContext(userId, String.valueOf(sessionId));
+                    aiResponse = agentOrchestrator.execute(message, ctx);
                 }
-            );
-        }
+
+                // 流式逐字发送
+                if (aiResponse != null) {
+                    for (int i = 0; i < aiResponse.length(); i++) {
+                        String token = aiResponse.substring(i, Math.min(i + 3, aiResponse.length()));
+                        emitter.send(SseEmitter.event().name("token").data(token));
+                        i += 2; // 每次发 3 个字符
+                    }
+                }
+                emitter.send(SseEmitter.event().name("done").data(Map.of()));
+                emitter.complete();
+            } catch (Exception e) {
+                try { emitter.send(SseEmitter.event().name("error").data(e.getMessage())); } catch (Exception ex) {}
+                emitter.completeWithError(e);
+            }
+        });
+
         return emitter;
     }
 }
