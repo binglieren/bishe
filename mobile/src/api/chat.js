@@ -61,43 +61,47 @@ export const patchMessageRender = (messageId, payload) =>
 export const sendMessageStream = async (data, onToken, onError, onDone) => {
   const token = await import('@react-native-async-storage/async-storage')
     .then(m => m.default.getItem('token')).catch(() => null);
-  try {
-    const baseUrl = request.defaults.baseURL.replace(/\/api$/, '');
-    const res = await fetch(`${baseUrl}/api/chat/send/stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': token ? `Bearer ${token}` : '',
-      },
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+  const baseUrl = request.defaults.baseURL.replace(/\/api$/, '');
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (line.startsWith('data:')) {
-          const raw = line.slice(5).trim();
-          if (!raw) continue;
-          try {
-            const json = JSON.parse(raw);
-            if (typeof json === 'string') onToken(json);
-          } catch {
-            onToken(raw);
-          }
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', `${baseUrl}/api/chat/send/stream`, true);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+  xhr.responseType = '';
+
+  let lastIndex = 0;
+
+  xhr.onprogress = () => {
+    const newText = xhr.responseText.substring(lastIndex);
+    lastIndex = xhr.responseText.length;
+    if (!newText) return;
+
+    // SSE 格式: event:xxx\ndata:xxx\n\n
+    const lines = newText.split('\n');
+    for (const line of lines) {
+      if (line.startsWith('data:')) {
+        const raw = line.slice(5).trim();
+        if (!raw || raw === '{}') continue;
+        try {
+          const json = JSON.parse(raw);
+          if (typeof json === 'string') onToken(json);
+        } catch {
+          onToken(raw);
         }
-        if (line.startsWith('event:done')) onDone();
       }
     }
-    onDone();
-  } catch (err) {
-    onError(err);
-  }
+  };
+
+  xhr.onload = () => {
+    if (xhr.status >= 200 && xhr.status < 300) {
+      onDone();
+    } else {
+      onError(new Error(`HTTP ${xhr.status}`));
+    }
+  };
+
+  xhr.onerror = () => onError(new Error('网络错误'));
+  xhr.ontimeout = () => onError(new Error('请求超时'));
+  xhr.timeout = 120000;
+  xhr.send(JSON.stringify(data));
 };
