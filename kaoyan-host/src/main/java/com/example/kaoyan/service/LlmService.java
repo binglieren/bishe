@@ -3,11 +3,13 @@ package com.example.kaoyan.service;
 import com.example.kaoyan.entity.AiConfig;
 import com.example.kaoyan.repository.AiConfigRepository;
 import com.example.kaoyan.util.AgentDebugLog;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -383,6 +385,55 @@ public class LlmService {
         List<Map<String, Object>> choices = (List<Map<String, Object>>) response.get("choices");
         Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
         return (String) message.get("content");
+    }
+
+    /**
+     * 流式 chat（SSE）。返回 Flux<String>，每个元素是一个 token。
+     */
+    public Flux<String> chatStream(List<Map<String, String>> messages, Long userId) {
+        String url = resolveApiUrl(userId);
+        String key = resolveApiKey(userId);
+        String model = resolveChatModel(userId);
+        Double temperature = resolveTemperature(userId);
+        Integer maxTokens = resolveMaxTokens(userId);
+
+        Map<String, Object> requestBody = Map.of(
+                "model", model,
+                "messages", messages,
+                "temperature", temperature,
+                "max_tokens", maxTokens,
+                "stream", true
+        );
+
+        return webClientBuilder.codecs(c -> c.defaultCodecs().maxInMemorySize(25 * 1024 * 1024)).baseUrl(url).build()
+                .post()
+                .uri("/chat/completions")
+                .header("Authorization", "Bearer " + key)
+                .header("Content-Type", "application/json")
+                .bodyValue(requestBody)
+                .retrieve()
+                .bodyToFlux(String.class)
+                .filter(line -> !line.isBlank() && line.startsWith("data: ") && !line.equals("data: [DONE]"))
+                .map(line -> line.substring(6))
+                .map(this::extractStreamToken)
+                .filter(token -> token != null && !token.isEmpty());
+    }
+
+    private final ObjectMapper streamObjectMapper = new ObjectMapper();
+
+    @SuppressWarnings("unchecked")
+    private String extractStreamToken(String json) {
+        try {
+            Map<String, Object> data = streamObjectMapper.readValue(json, Map.class);
+            List<Map<String, Object>> choices = (List<Map<String, Object>>) data.get("choices");
+            if (choices == null || choices.isEmpty()) return null;
+            Map<String, Object> delta = (Map<String, Object>) choices.get(0).get("delta");
+            if (delta == null) return null;
+            Object content = delta.get("content");
+            return content != null ? content.toString() : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**

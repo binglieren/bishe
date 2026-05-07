@@ -34,6 +34,7 @@ import { MathText } from '../components/MathText';
 import {
   getMessages,
   sendMessage,
+  sendMessageStream,
   transcribeAudio,
   synthesizeSpeech,
   bindSessionKnowledgeBase,
@@ -504,6 +505,16 @@ export default function ChatScreen({ route, navigation }) {
     }
   };
 
+  // 公式预渲染 + 双写缓存的辅助函数
+  const prerenderAndPersist = async (content, msgId) => {
+    const segs = prerenderMessage(content, 15);
+    setCached(content, segs, 15).catch(() => {});
+    if (msgId) {
+      const meta = JSON.stringify(segs);
+      patchMessageRender(msgId, { contentHtml: meta, renderMeta: meta }).catch(() => {});
+    }
+  };
+
   // 发送
   const handleSend = async () => {
     const hasText = inputValue.trim().length > 0;
@@ -528,33 +539,64 @@ export default function ChatScreen({ route, navigation }) {
       const payload = { sessionId, message: userMsg };
       if (imageBase64) payload.image = imageBase64;
 
-      const res = await sendMessage(payload);
-      // 首次发送时 backend 自动创建 session，拿到 id
-      if (!sessionId && res.data.sessionId) {
-        const newSid = res.data.sessionId;
-        setSessionId(newSid);
-        // 若用户此前已选了 KB，绑到新建的 session 上（后台异步，失败不阻塞）
-        if (selectedKbId) {
-          bindSessionKnowledgeBase(newSid, selectedKbId).catch(() => {});
+      // 图片消息：同步调用（保持原有逻辑）
+      if (imageBase64) {
+        const res = await sendMessage(payload);
+        if (!sessionId && res.data.sessionId) {
+          setSessionId(res.data.sessionId);
+          if (selectedKbId) bindSessionKnowledgeBase(res.data.sessionId, selectedKbId).catch(() => {});
         }
-      }
-      const aiContent = res.data.content;
-      const aiId = res.data.id;
-      setMessages((prev) => [...prev, { role: 'assistant', content: aiContent, id: aiId }]);
+        const aiContent = res.data.content;
+        const aiId = res.data.id;
+        setMessages((prev) => [...prev, { role: 'assistant', content: aiContent, id: aiId }]);
+        if (aiContent && hasMath(aiContent)) {
+          prerenderAndPersist(aiContent, aiId);
+        }
+      } else {
+        // 文本消息：流式 SSE
+        const msgIdx = messages.length + 1; // 新消息的 index
+        setMessages((prev) => [...prev, { role: 'assistant', content: '', id: null, _streaming: true }]);
 
-      // 公式预渲染 + 双写缓存（后台，不阻塞 UI）
-      if (aiContent && hasMath(aiContent)) {
-        (async () => {
-          const segs = prerenderMessage(aiContent, 15);
-          setCached(aiContent, segs, 15).catch(() => {});
-          if (aiId) {
-            const meta = JSON.stringify(segs);
-            patchMessageRender(aiId, {
-              contentHtml: meta,
-              renderMeta: meta,
-            }).catch(() => {});
+        await sendMessageStream(payload,
+          // onToken
+          (token) => {
+            setMessages((prev) => {
+              const list = [...prev];
+              const last = list[list.length - 1];
+              if (last && last._streaming) {
+                list[list.length - 1] = { ...last, content: last.content + token };
+              }
+              return list;
+            });
+          },
+          // onError
+          (err) => {
+            setMessages((prev) => {
+              const list = [...prev];
+              const last = list[list.length - 1];
+              if (last && last._streaming) {
+                list[list.length - 1] = { ...last, content: '发送失败：' + (err?.message || '未知错误'), _streaming: false };
+              }
+              return list;
+            });
+            setSnackMsg('发送失败：' + (err?.message || '请重试'));
+            setSnackVisible(true);
+          },
+          // onDone
+          () => {
+            setMessages((prev) => {
+              const list = [...prev];
+              const last = list[list.length - 1];
+              if (last && last._streaming) {
+                list[list.length - 1] = { ...last, _streaming: false };
+                if (last.content && hasMath(last.content)) {
+                  prerenderAndPersist(last.content, last.id).catch(() => {});
+                }
+              }
+              return list;
+            });
           }
-        })();
+        );
       }
     } catch (err) {
       const backendMsg = err?.response?.data?.message;

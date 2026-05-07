@@ -50,3 +50,54 @@ export const synthesizeSpeech = (text, voiceName) =>
  */
 export const patchMessageRender = (messageId, payload) =>
   request.patch(`/chat/message/${messageId}/render`, payload);
+
+/**
+ * 流式消息（SSE）— 逐 token 回调。
+ * @param {{ sessionId, message, image? }} data
+ * @param {(token:string)=>void} onToken  每个 token 回调
+ * @param {(err:Error)=>void} onError   错误回调
+ * @param {()=>void} onDone            完成回调
+ */
+export const sendMessageStream = async (data, onToken, onError, onDone) => {
+  const token = await import('@react-native-async-storage/async-storage')
+    .then(m => m.default.getItem('token')).catch(() => null);
+  try {
+    const baseUrl = request.defaults.baseURL.replace(/\/api$/, '');
+    const res = await fetch(`${baseUrl}/api/chat/send/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? `Bearer ${token}` : '',
+      },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (line.startsWith('data:')) {
+          const raw = line.slice(5).trim();
+          if (!raw) continue;
+          try {
+            const json = JSON.parse(raw);
+            if (typeof json === 'string') onToken(json);
+          } catch {
+            onToken(raw);
+          }
+        }
+        if (line.startsWith('event:done')) onDone();
+      }
+    }
+    onDone();
+  } catch (err) {
+    onError(err);
+  }
+};

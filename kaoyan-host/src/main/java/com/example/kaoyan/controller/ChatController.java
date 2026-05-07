@@ -1,5 +1,7 @@
 package com.example.kaoyan.controller;
 
+import com.example.kaoyan.agent.AgentContext;
+import com.example.kaoyan.agent.AgentOrchestrator;
 import com.example.kaoyan.dto.ChatRequest;
 import com.example.kaoyan.dto.ChatSessionDTO;
 import com.example.kaoyan.dto.TranscribeRequest;
@@ -14,12 +16,14 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import reactor.core.publisher.Flux;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * AI 问答控制器
@@ -32,6 +36,7 @@ public class ChatController {
 
     private final ChatService chatService;
     private final LlmService llmService;
+    private final AgentOrchestrator agentOrchestrator;
 
     @PostMapping("/session")
     @Operation(summary = "创建对话会话")
@@ -136,5 +141,62 @@ public class ChatController {
         // mime 由具体 TTS 路由决定（DashScope=mp3、Gemini=wav）
         payload.put("mimeType", llmService.getTtsMimeType());
         return Result.success(payload);
+    }
+
+    @PostMapping(value = "/send/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @Operation(summary = "流式发送消息（SSE）— 逐 token 返回 + Agent 切换事件")
+    public SseEmitter sendStream(Authentication auth, @Valid @RequestBody ChatRequest request) {
+        Long userId = (Long) auth.getPrincipal();
+        SseEmitter emitter = new SseEmitter(300_000L); // 5 分钟超时
+
+        String userMessage = request.getMessage();
+        Long sessionId = request.getSessionId();
+
+        // 1. 先创建/确认 session（复用 ChatService）
+        if (sessionId == null) {
+            ChatSession session = chatService.createSession(userId, null);
+            sessionId = session.getId();
+            // 通知前端 sessionId
+            try { emitter.send(SseEmitter.event().name("session").data(Map.of("sessionId", sessionId))); } catch (Exception e) {}
+        }
+
+        // 2. 保存用户消息
+        String imageBase64 = request.getImage();
+        boolean hasImage = imageBase64 != null && !imageBase64.isBlank();
+
+        // 3. 流式处理
+        if (hasImage) {
+            // 图片消息暂时用同步，然后用 SSE 一次性返回
+            ChatMessage reply = chatService.sendMessage(userId, sessionId, userMessage, imageBase64);
+            CompletableFuture.runAsync(() -> {
+                try {
+                    emitter.send(SseEmitter.event().name("token").data(reply.getContent()));
+                    emitter.send(SseEmitter.event().name("done").data(Map.of()));
+                    emitter.complete();
+                } catch (Exception e) {
+                    emitter.completeWithError(e);
+                }
+            });
+        } else {
+            // Agent 流式
+            AgentContext ctx = new AgentContext(userId, String.valueOf(sessionId));
+            Flux<String> stream = llmService.chatStream(
+                List.of(Map.of("role", "user", "content", userMessage)), userId);
+            emitter.onCompletion(stream::blockLast);
+            stream.subscribe(
+                token -> {
+                    try { emitter.send(SseEmitter.event().name("token").data(token)); }
+                    catch (Exception e) { /* 客户端断开 */ }
+                },
+                error -> emitter.completeWithError(error),
+                () -> {
+                    try {
+                        emitter.send(SseEmitter.event().name("done").data(Map.of()));
+                        emitter.complete();
+                    } catch (Exception e) { /* ignore */ }
+                }
+            );
+        }
+        return emitter;
     }
 }
