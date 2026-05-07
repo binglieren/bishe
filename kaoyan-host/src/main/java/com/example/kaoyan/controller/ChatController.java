@@ -197,7 +197,9 @@ public class ChatController {
             if (token.startsWith("Bearer ")) token = token.substring(7);
             return jwtUtil.getUserIdFromToken(token);
         } catch (Exception e) {
-            return null;
+        return null;
+    }
+}
         }
     }
 
