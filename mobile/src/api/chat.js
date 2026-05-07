@@ -72,8 +72,10 @@ export const sendMessageStream = (data, onToken, onError, onDone) => {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', `${baseUrl}/api/chat/send/stream`, true);
         xhr.setRequestHeader('Content-Type', 'application/json');
-        if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
         xhr.timeout = 120000;
+
+        // token 通过 body 传给后端手动验证
+        const body = { ...data, token: token || '' };
 
         let lastIndex = 0;
         xhr.onreadystatechange = () => {
@@ -99,7 +101,7 @@ export const sendMessageStream = (data, onToken, onError, onDone) => {
         };
         xhr.onerror = () => finishWithError(new Error('网络错误'));
         xhr.ontimeout = () => finishWithError(new Error('请求超时'));
-        xhr.send(JSON.stringify(data));
+        xhr.send(JSON.stringify(body));
       })
       .catch(e => finishWithError(e));
   });
