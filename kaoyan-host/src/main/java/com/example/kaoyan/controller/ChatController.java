@@ -160,7 +160,7 @@ public class ChatController {
 
         Flux<String> flux;
         if (hasImage) {
-            // 图片走同步，Flux 包装
+            System.out.println("SSE path: image");
             flux = Flux.create(sink -> {
                 try {
                     Long sid = reqSessionId != null ? reqSessionId : chatService.createSession(userId, null).getId();
@@ -174,13 +174,14 @@ public class ChatController {
                 } catch (Exception e) { sink.error(e); }
             });
         } else {
-            // 文本走真流式 DeepSeek SSE
+            System.out.println("SSE path: text, userId=" + userId + " message=" + (message != null ? message.substring(0, Math.min(20, message.length())) : "null"));
             List<Map<String, String>> messages = new ArrayList<>();
             messages.add(Map.of("role", "system", "content", llmService.resolveSystemPrompt(userId)));
             messages.add(Map.of("role", "user", "content", message));
             flux = llmService.chatStream(messages, userId);
         }
 
+        System.out.println("SSE: about to subscribe flux");
         flux.subscribe(
             token -> {
                 try {
