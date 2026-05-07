@@ -197,7 +197,7 @@ public class LlmService {
         }
         Integer sys = systemApiConfigService.getMaxTokens(SystemApiConfigService.STAGE_CHAT);
         if (sys != null) return sys;
-        return 2000;
+        return 4096;
     }
 
     public String resolveSystemPrompt(Long userId) {
@@ -229,7 +229,7 @@ public class LlmService {
         String key = resolveEmbeddingApiKey(userId);
         String model = resolveEmbeddingModel(userId);
 
-        WebClient client = webClientBuilder.baseUrl(url).build();
+        WebClient client = webClientBuilder.codecs(c -> c.defaultCodecs().maxInMemorySize(25 * 1024 * 1024)).baseUrl(url).build();
 
         Map<String, Object> requestBody = Map.of(
                 "model", model,
@@ -300,7 +300,7 @@ public class LlmService {
         Double temperature = resolveTemperature(userId);
         Integer maxTokens = resolveMaxTokens(userId);
 
-        WebClient client = webClientBuilder.baseUrl(url).build();
+        WebClient client = webClientBuilder.codecs(c -> c.defaultCodecs().maxInMemorySize(25 * 1024 * 1024)).baseUrl(url).build();
 
         Map<String, Object> requestBody = Map.of(
                 "model", model,
@@ -344,7 +344,7 @@ public class LlmService {
         Double temperature = resolveTemperature(userId);
         Integer maxTokens = resolveMaxTokens(userId);
 
-        WebClient client = webClientBuilder.baseUrl(url).build();
+        WebClient client = webClientBuilder.codecs(c -> c.defaultCodecs().maxInMemorySize(25 * 1024 * 1024)).baseUrl(url).build();
 
         Map<String, Object> requestBody = Map.of(
                 "model", model,

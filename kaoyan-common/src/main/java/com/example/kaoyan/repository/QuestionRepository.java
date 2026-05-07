@@ -57,4 +57,15 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
     @Query(value = "SELECT * FROM question WHERE subject = :subject AND difficulty BETWEEN 2 AND 3 " +
                    "ORDER BY RANDOM() LIMIT :limit", nativeQuery = true)
     List<Question> findColdStartBySubject(@Param("subject") String subject, @Param("limit") int limit);
+
+    /** 多条件组合搜索（MCP 工具用） */
+    @Query("SELECT q FROM Question q WHERE "
+        + "(:subject IS NULL OR q.subject = :subject) AND "
+        + "(:type IS NULL OR q.type = :type) AND "
+        + "(:difficulty IS NULL OR q.difficulty = :difficulty) AND "
+        + "(:kpId IS NULL OR q.knowledgePointId = :kpId)")
+    List<Question> searchQuestions(@Param("subject") String subject,
+                                   @Param("type") String type,
+                                   @Param("difficulty") Integer difficulty,
+                                   @Param("kpId") Long kpId);
 }

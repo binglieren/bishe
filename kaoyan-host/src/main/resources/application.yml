@@ -1,5 +1,7 @@
 server:
   port: 8088
+  tomcat:
+    max-http-form-post-size: 50MB
 
 spring:
   datasource:
@@ -78,6 +80,15 @@ llm:
 # 文件上传路径
 file:
   upload-dir: ./uploads
+
+# MCP Server 地址
+mcp:
+  rag:
+    url: http://localhost:8091
+  question:
+    url: http://localhost:8092
+  knowledge:
+    url: http://localhost:8093
 
 springdoc:
   api-docs:
