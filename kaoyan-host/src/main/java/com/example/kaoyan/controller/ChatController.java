@@ -21,6 +21,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import reactor.core.publisher.Flux;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -145,7 +146,7 @@ public class ChatController {
     }
 
     @PostMapping(value = "/send/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @Operation(summary = "流式发送消息（SSE）— token 由 body 传入")
+    @Operation(summary = "真流式 SSE，token 由 body 传入")
     public SseEmitter sendStream(@RequestBody Map<String, Object> body) {
         Long userId = extractTokenUserId(body);
         if (userId == null) throw new RuntimeException("token required");
@@ -157,37 +158,45 @@ public class ChatController {
         final String imageBase64 = (String) body.get("image");
         final boolean hasImage = imageBase64 != null && !imageBase64.isBlank();
 
-        CompletableFuture.runAsync(() -> {
-            Long sid = reqSessionId;
-            try {
-                if (sid == null) {
-                    ChatSession session = chatService.createSession(userId, null);
-                    sid = session.getId();
+        Flux<String> flux;
+        if (hasImage) {
+            // 图片走同步，Flux 包装
+            flux = Flux.create(sink -> {
+                try {
+                    Long sid = reqSessionId != null ? reqSessionId : chatService.createSession(userId, null).getId();
                     emitter.send(SseEmitter.event().name("session").data(Map.of("sessionId", sid)));
-                }
-
-                String aiResponse;
-                if (hasImage) {
                     ChatMessage reply = chatService.sendMessage(userId, sid, message, imageBase64);
-                    aiResponse = reply.getContent();
-                } else {
-                    AgentContext ctx = new AgentContext(userId, String.valueOf(sid));
-                    aiResponse = agentOrchestrator.execute(message, ctx);
-                }
-
-                if (aiResponse != null) {
-                    for (int i = 0; i < aiResponse.length(); i += 3) {
-                        String token = aiResponse.substring(i, Math.min(i + 3, aiResponse.length()));
-                        emitter.send(SseEmitter.event().name("token").data(token));
+                    String content = reply.getContent();
+                    if (content != null) {
+                        for (char c : content.toCharArray()) sink.next(String.valueOf(c));
                     }
-                }
-                emitter.send(SseEmitter.event().name("done").data(Map.of()));
-                emitter.complete();
-            } catch (Exception e) {
-                try { emitter.send(SseEmitter.event().name("error").data(e.getMessage())); } catch (Exception ex) {}
-                emitter.completeWithError(e);
+                    sink.complete();
+                } catch (Exception e) { sink.error(e); }
+            });
+        } else {
+            // 文本走真流式 DeepSeek SSE
+            List<Map<String, String>> messages = new ArrayList<>();
+            messages.add(Map.of("role", "system", "content", llmService.resolveSystemPrompt(userId)));
+            messages.add(Map.of("role", "user", "content", message));
+            flux = llmService.chatStream(messages, userId);
+        }
+
+        flux.subscribe(
+            token -> {
+                try { emitter.send(SseEmitter.event().name("token").data(token)); }
+                catch (Exception e) { /* client gone */ }
+            },
+            error -> {
+                try { emitter.send(SseEmitter.event().name("error").data(error.getMessage())); } catch (Exception ex) {}
+                emitter.completeWithError(error);
+            },
+            () -> {
+                try {
+                    emitter.send(SseEmitter.event().name("done").data(Map.of()));
+                    emitter.complete();
+                } catch (Exception e) { /* ignore */ }
             }
-        });
+        );
 
         return emitter;
     }

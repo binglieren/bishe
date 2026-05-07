@@ -60,37 +60,36 @@ export const patchMessageRender = (messageId, payload) =>
  */
 export const sendMessageStream = async (data, onToken, onError, onDone) => {
   const baseUrl = request.defaults.baseURL.replace(/\/api$/, '');
-  try {
-    const tok = await import('@react-native-async-storage/async-storage')
-      .then(m => m.default.getItem('token')).catch(() => null);
+  const tok = await import('@react-native-async-storage/async-storage')
+    .then(m => m.default.getItem('token')).catch(() => null);
 
-    const res = await fetch(`${baseUrl}/api/chat/send/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...data, token: tok || '' }),
-    });
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', `${baseUrl}/api/chat/send/stream`, true);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  xhr.timeout = 120000;
 
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const text = await res.text();
-
-    // 批量解析 SSE
-    const lines = text.split('\n');
-    let content = '';
+  let lastIndex = 0;
+  xhr.onprogress = () => {
+    const newText = xhr.responseText.substring(lastIndex);
+    lastIndex = xhr.responseText.length;
+    if (!newText) return;
+    const lines = newText.split('\n');
     for (const line of lines) {
       if (line.startsWith('data:')) {
         const raw = line.slice(5).trim();
         if (!raw || raw === '{}') continue;
-        try { const j = JSON.parse(raw); if (typeof j === 'string') content += j; }
-        catch { content += raw; }
+        try { const j = JSON.parse(raw); if (typeof j === 'string') onToken(j); }
+        catch { onToken(raw); }
       }
     }
-    // 模拟流式逐字输出
-    for (let i = 0; i < content.length; i++) {
-      onToken(content[i]);
-      if (i % 3 === 0) await new Promise(r => setTimeout(r, 20)); // 每3字停顿20ms
-    }
-    onDone();
-  } catch (err) {
-    onError(err);
-  }
+  };
+
+  xhr.onload = () => {
+    if (xhr.status >= 200 && xhr.status < 300) onDone();
+    else onError(new Error(`HTTP ${xhr.status}`));
+  };
+  xhr.onerror = () => onError(new Error('网络错误'));
+  xhr.ontimeout = () => onError(new Error('请求超时'));
+
+  xhr.send(JSON.stringify({ ...data, token: tok || '' }));
 };
