@@ -24,6 +24,7 @@ import {
 } from '../api/question';
 import { colors, radii, spacing, shadows, typography } from '../theme';
 import ModernCard from '../components/ModernCard';
+import { MathText } from '../components/MathText';
 
 const TYPE_COLORS = {
   单选: colors.single,
@@ -346,7 +347,7 @@ export default function QuestionScreen() {
           {/* Question */}
           <ModernCard padding={18} elevation="sm" style={{ marginBottom: spacing.md }}>
             <Text style={styles.questionLabel}>📝 题目</Text>
-            <Text style={styles.questionText}>{q.content}</Text>
+            <MathText value={q.content} style={styles.questionText} />
           </ModernCard>
 
           {/* Options */}
@@ -383,7 +384,7 @@ export default function QuestionScreen() {
                     >
                       <Text style={styles.optionLabel}>{opt.label}</Text>
                     </View>
-                    <Text style={styles.optionContent}>{opt.content}</Text>
+                    <MathText value={opt.content} style={styles.optionContent} />
                     {attemptResult && opt.isCorrect && (
                       <Text style={styles.optionMark}>✓</Text>
                     )}
@@ -418,11 +419,11 @@ export default function QuestionScreen() {
                   style={{ backgroundColor: colors.successSoft, marginTop: spacing.sm }}
                 >
                   <Text style={styles.answerLabel}>✅ 参考答案</Text>
-                  <Text style={styles.answerText}>{q.answer}</Text>
+                  <MathText value={q.answer} style={styles.answerText} />
                   {q.analysis ? (
                     <>
                       <Text style={[styles.answerLabel, { marginTop: spacing.md }]}>📖 解析</Text>
-                      <Text style={styles.analysisText}>{q.analysis}</Text>
+                      <MathText value={q.analysis} style={styles.analysisText} />
                     </>
                   ) : null}
                 </ModernCard>
@@ -467,7 +468,7 @@ export default function QuestionScreen() {
                 </Text>
               )}
               {attemptResult.analysis ? (
-                <Text style={styles.analysisText}>📖 {attemptResult.analysis}</Text>
+                <MathText value={"📖 " + attemptResult.analysis} style={styles.analysisText} />
               ) : null}
             </ModernCard>
           )}
