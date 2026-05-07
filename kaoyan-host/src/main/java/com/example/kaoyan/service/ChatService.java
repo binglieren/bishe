@@ -1,5 +1,7 @@
 package com.example.kaoyan.service;
 
+import com.example.kaoyan.agent.AgentContext;
+import com.example.kaoyan.agent.AgentOrchestrator;
 import com.example.kaoyan.dto.ChatSessionDTO;
 import com.example.kaoyan.entity.ChatMessage;
 import com.example.kaoyan.entity.ChatSession;
@@ -23,6 +25,7 @@ public class ChatService {
     private final ChatSessionRepository chatSessionRepository;
     private final ChatMessageRepository chatMessageRepository;
     private final DocumentChunkRepository documentChunkRepository;
+    private final AgentOrchestrator agentOrchestrator;
     private final LlmService llmService;
     private final QuestionExtractionService questionExtractionService;
 
@@ -194,22 +197,21 @@ public class ChatService {
             // #endregion
             aiResponse = llmService.chatMultimodal(multimodalMessages, userId);
         } else {
-            // 纯文本路径：保持原有逻辑
-            List<Map<String, String>> messages = new ArrayList<>();
-            messages.add(Map.of("role", "system", "content", systemPrompt));
-
+            // Agent 路径：通过 Supervisor + MCP 工具协同回答
+            AgentContext agentCtx = new AgentContext(userId, String.valueOf(sessionId));
+            List<Map<String, String>> agentHistory = new ArrayList<>();
             for (ChatMessage msg : history) {
                 if (!msg.getId().equals(userMsg.getId())) {
-                    messages.add(Map.of("role", msg.getRole(), "content", msg.getContent()));
+                    agentHistory.add(Map.of("role", msg.getRole(), "content", msg.getContent()));
                 }
             }
-            messages.add(Map.of("role", "user", "content", userMessage));
+            agentCtx.setHistory(agentHistory);
 
             // #region agent log
-            AgentDebugLog.ndjson("H4", "ChatService.sendMessage:beforeLlm", "calling chat",
-                    "{\"messageCount\":" + messages.size() + "}");
+            AgentDebugLog.ndjson("H4", "ChatService.sendMessage:beforeAgent", "calling agent orchestrator",
+                    "{\"messageCount\":" + agentHistory.size() + "}");
             // #endregion
-            aiResponse = llmService.chat(messages, userId);
+            aiResponse = agentOrchestrator.execute(userMessage, agentCtx);
         }
         // #region agent log
         AgentDebugLog.ndjson("H4ok", "ChatService.sendMessage:afterLlm", "chat ok",
