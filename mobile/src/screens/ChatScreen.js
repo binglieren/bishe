@@ -22,6 +22,7 @@ import {
   Portal,
   Dialog,
   RadioButton,
+  Checkbox,
   Button,
 } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
@@ -38,6 +39,7 @@ import {
   transcribeAudio,
   synthesizeSpeech,
   bindSessionKnowledgeBase,
+  setKnowledgeBases,
   toggleThinking,
   patchMessageRender,
 } from '../api/chat';
@@ -54,10 +56,10 @@ import { prerenderMessage, hasMath } from '../components/math/renderLatex';
 export default function ChatScreen({ route, navigation }) {
   const initialSessionId = route?.params?.sessionId || null;
   const initialTitle = route?.params?.title || '新对话';
-  const initialKbId = route?.params?.knowledgeBaseId ?? null;
+  const initialKbIds = route?.params?.knowledgeBaseIds || [];
 
   const [sessionId, setSessionId] = useState(initialSessionId);
-  const [selectedKbId, setSelectedKbId] = useState(initialKbId);
+  const [selectedKbIds, setSelectedKbIds] = useState(initialKbIds);
   const [kbList, setKbList] = useState([]);
   const [thinkingEnabled, setThinkingEnabled] = useState(route?.params?.thinkingEnabled ?? false);
   const [kbDialogVisible, setKbDialogVisible] = useState(false);
@@ -277,17 +279,34 @@ export default function ChatScreen({ route, navigation }) {
     })();
   }, []);
 
-  // 选择/切换知识库：若已有 session，立即写到后端；否则先记住，等 session 建立后再绑
-  const handlePickKb = async (kbId) => {
-    setSelectedKbId(kbId);
-    setKbDialogVisible(false);
+  // 切换知识库（多选）
+  const handleToggleKb = async (kbId) => {
+    let newIds;
+    if (selectedKbIds.includes(kbId)) {
+      newIds = selectedKbIds.filter(id => id !== kbId);
+    } else {
+      if (selectedKbIds.length >= 5) {
+        setSnackMsg('最多绑定5个知识库');
+        setSnackVisible(true);
+        return;
+      }
+      newIds = [...selectedKbIds, kbId];
+    }
+    setSelectedKbIds(newIds);
     if (sessionId) {
       try {
-        await bindSessionKnowledgeBase(sessionId, kbId);
+        await setKnowledgeBases(sessionId, newIds);
       } catch (err) {
         setSnackMsg(err.message || '切换知识库失败');
         setSnackVisible(true);
       }
+    }
+  };
+
+  const handleApplyKbs = () => {
+    setKbDialogVisible(false);
+    if (sessionId) {
+      setKnowledgeBases(sessionId, selectedKbIds).catch(() => {});
     }
   };
 
@@ -307,7 +326,7 @@ export default function ChatScreen({ route, navigation }) {
     }
   };
 
-  const selectedKb = kbList.find((k) => k.id === selectedKbId);
+  const selectedKbs = kbList.filter((k) => selectedKbIds.includes(k.id));
 
   // ── 录音：按住开始，松开结束 → 上传识别 → 填入输入框 ──
   const startRecording = async () => {
@@ -562,7 +581,7 @@ export default function ChatScreen({ route, navigation }) {
         const res = await sendMessage(payload);
         if (!sessionId && res.data.sessionId) {
           setSessionId(res.data.sessionId);
-          if (selectedKbId) bindSessionKnowledgeBase(res.data.sessionId, selectedKbId).catch(() => {});
+          if (selectedKbIds.length > 0) setKnowledgeBases(res.data.sessionId, selectedKbIds).catch(() => {});
         }
         const aiContent = res.data.content;
         const aiId = res.data.id;
@@ -728,16 +747,16 @@ export default function ChatScreen({ route, navigation }) {
       {/* 顶部：知识库接入状态 */}
       <View style={styles.kbBar}>
         <TouchableOpacity
-          style={[styles.kbChip, selectedKb && styles.kbChipActive]}
+          style={[styles.kbChip, selectedKbs.length > 0 && styles.kbChipActive]}
           activeOpacity={0.75}
           onPress={() => setKbDialogVisible(true)}
         >
           <RNText style={styles.kbChipIcon}>📚</RNText>
           <Text
-            style={[styles.kbChipText, selectedKb && styles.kbChipTextActive]}
+            style={[styles.kbChipText, selectedKbs.length > 0 && styles.kbChipTextActive]}
             numberOfLines={1}
           >
-            {selectedKb ? `已接入：${selectedKb.name}` : '未接入知识库'}
+            {selectedKbs.length > 0 ? `已接入 ${selectedKbs.length} 个知识库` : '未接入知识库'}
           </Text>
           <RNText style={styles.kbChipChevron}>⌄</RNText>
         </TouchableOpacity>
@@ -923,34 +942,26 @@ export default function ChatScreen({ route, navigation }) {
       {/* 知识库选择弹窗 */}
       <Portal>
         <Dialog visible={kbDialogVisible} onDismiss={() => setKbDialogVisible(false)}>
-          <Dialog.Title>为本次对话选择知识库</Dialog.Title>
+          <Dialog.Title>为本次对话选择知识库（多选，最多5个）</Dialog.Title>
           <Dialog.ScrollArea style={{ paddingHorizontal: 0, maxHeight: 400 }}>
-            <RadioButton.Group
-              onValueChange={(v) => handlePickKb(v === 'none' ? null : Number(v))}
-              value={selectedKbId ? String(selectedKbId) : 'none'}
-            >
-              <RadioButton.Item
-                label="不接入（不使用知识库资料）"
-                value="none"
+            {kbList.map((kb) => (
+              <Checkbox.Item
+                key={kb.id}
+                label={`${kb.name}  ·  ${kb.enabledCount || 0}/${kb.documentCount || 0} 启用`}
+                status={selectedKbIds.includes(kb.id) ? 'checked' : 'unchecked'}
+                onPress={() => handleToggleKb(kb.id)}
                 labelStyle={{ fontSize: 14 }}
               />
-              {kbList.map((kb) => (
-                <RadioButton.Item
-                  key={kb.id}
-                  label={`${kb.name}  ·  ${kb.enabledCount || 0}/${kb.documentCount || 0} 启用`}
-                  value={String(kb.id)}
-                  labelStyle={{ fontSize: 14 }}
-                />
-              ))}
-              {kbList.length === 0 && (
-                <Text style={{ padding: 16, color: colors.textTertiary }}>
-                  你还没有知识库，去「知识库」页面新建一个吧
-                </Text>
-              )}
-            </RadioButton.Group>
+            ))}
+            {kbList.length === 0 && (
+              <Text style={{ padding: 16, color: colors.textTertiary }}>
+                你还没有知识库，去「知识库」页面新建一个吧
+              </Text>
+            )}
           </Dialog.ScrollArea>
           <Dialog.Actions>
-            <Button onPress={() => setKbDialogVisible(false)}>关闭</Button>
+            <Button onPress={() => setKbDialogVisible(false)}>取消</Button>
+            <Button onPress={handleApplyKbs}>确定</Button>
           </Dialog.Actions>
         </Dialog>
       </Portal>

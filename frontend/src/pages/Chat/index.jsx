@@ -1,9 +1,10 @@
 import { useEffect, useState, useRef } from 'react';
-import { Input, Button, List, Card, message, Typography, Space, Popconfirm } from 'antd';
-import { SendOutlined, PlusOutlined, DeleteOutlined, RobotOutlined, UserOutlined } from '@ant-design/icons';
-import { getSessions, getMessages, sendMessage, createSession, deleteSession } from '../../api/chat';
+import { Input, Button, List, Card, message, Typography, Space, Popconfirm, Modal, Select, Tag, Tooltip } from 'antd';
+import { SendOutlined, PlusOutlined, DeleteOutlined, RobotOutlined, UserOutlined, SettingOutlined, BookOutlined } from '@ant-design/icons';
+import { getSessions, getMessages, sendMessage, createSession, deleteSession, setSystemPrompt, setKnowledgeBases } from '../../api/chat';
+import { getKnowledgeBases } from '../../api/knowledgeBase';
 
-const { Title, Paragraph } = Typography;
+const { Title, Paragraph, Text } = Typography;
 const { TextArea } = Input;
 
 export default function ChatPage() {
@@ -13,6 +14,11 @@ export default function ChatPage() {
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef(null);
+
+  const [allKbs, setAllKbs] = useState([]);
+  const [promptModalOpen, setPromptModalOpen] = useState(false);
+  const [promptValue, setPromptValue] = useState('');
+  const currentSession = sessions.find(s => s.id === currentSessionId);
 
   const loadSessions = async () => {
     try {
@@ -32,7 +38,16 @@ export default function ChatPage() {
     }
   };
 
-  useEffect(() => { loadSessions(); }, []);
+  const loadKbs = async () => {
+    try {
+      const res = await getKnowledgeBases();
+      setAllKbs(res.data || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => { loadSessions(); loadKbs(); }, []);
   useEffect(() => { if (currentSessionId) loadMessages(currentSessionId); }, [currentSessionId]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -80,9 +95,36 @@ export default function ChatPage() {
     }
   };
 
+  const handleKnowledgeBaseChange = async (Ids) => {
+    if (!currentSessionId) return;
+    try {
+      await setKnowledgeBases(currentSessionId, Ids);
+      loadSessions();
+      message.success('已更新知识库绑定');
+    } catch (err) {
+      message.error('更新失败');
+    }
+  };
+
+  const handlePromptSave = async () => {
+    if (!currentSessionId) return;
+    try {
+      await setSystemPrompt(currentSessionId, promptValue || null);
+      setPromptModalOpen(false);
+      loadSessions();
+      message.success('已保存系统指令');
+    } catch (err) {
+      message.error('保存失败');
+    }
+  };
+
+  const openPromptModal = () => {
+    setPromptValue(currentSession?.systemPrompt || '');
+    setPromptModalOpen(true);
+  };
+
   return (
     <div style={{ display: 'flex', height: 'calc(100vh - 200px)' }}>
-      {/* 会话列表 */}
       <div style={{ width: 260, borderRight: '1px solid #f0f0f0', paddingRight: 16, overflow: 'auto' }}>
         <Button type="primary" icon={<PlusOutlined />} block onClick={handleNewSession} style={{ marginBottom: 12 }}>
           新对话
@@ -110,8 +152,38 @@ export default function ChatPage() {
         />
       </div>
 
-      {/* 对话区 */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingLeft: 16 }}>
+        {/* 会话工具栏 */}
+        {currentSessionId && (
+          <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder="绑定知识库"
+              style={{ minWidth: 200, maxWidth: 350 }}
+              value={currentSession?.knowledgeBaseIds || []}
+              onChange={handleKnowledgeBaseChange}
+              options={allKbs.map(kb => ({ label: kb.name, value: kb.id }))}
+              maxTagCount={2}
+            />
+            <Tooltip title="设置系统指令">
+              <Button
+                icon={<SettingOutlined />}
+                onClick={openPromptModal}
+                type={currentSession?.systemPrompt ? 'primary' : 'default'}
+                ghost={!!currentSession?.systemPrompt}
+              >
+                {currentSession?.systemPrompt ? '已设指令' : '系统指令'}
+              </Button>
+            </Tooltip>
+            {currentSession?.knowledgeBaseIds?.length > 0 && (
+              <span style={{ color: '#888', fontSize: 12 }}>
+                <BookOutlined /> 已绑定 {currentSession.knowledgeBaseIds.length} 个知识库
+              </span>
+            )}
+          </div>
+        )}
+
         <div style={{ flex: 1, overflow: 'auto', marginBottom: 16 }}>
           {messages.length === 0 ? (
             <div style={{ textAlign: 'center', marginTop: 80, color: '#999' }}>
@@ -152,6 +224,27 @@ export default function ChatPage() {
           </Button>
         </div>
       </div>
+
+      {/* 系统指令编辑弹窗 */}
+      <Modal
+        title="会话系统指令"
+        open={promptModalOpen}
+        onOk={handlePromptSave}
+        onCancel={() => setPromptModalOpen(false)}
+        okText="保存"
+        cancelText="取消"
+        width={600}
+      >
+        <Text type="secondary" style={{ marginBottom: 8, display: 'block' }}>
+          自定义 AI 在当前会话中的行为。例如："你是我的高等数学助教，请用通俗易懂的语言解释，多举例子。"
+        </Text>
+        <TextArea
+          rows={6}
+          value={promptValue}
+          onChange={(e) => setPromptValue(e.target.value)}
+          placeholder="留空则使用默认设置…"
+        />
+      </Modal>
     </div>
   );
 }

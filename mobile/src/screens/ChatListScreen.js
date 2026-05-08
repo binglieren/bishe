@@ -120,7 +120,7 @@ export default function ChatListScreen({ navigation }) {
     navigation.navigate('ChatDetail', {
       sessionId: session?.id || null,
       title: session?.title || '新对话',
-      knowledgeBaseId: session?.knowledgeBaseId ?? null,
+      knowledgeBaseIds: session?.knowledgeBaseIds || [],
       thinkingEnabled: session?.thinkingEnabled ?? false,
     });
   };

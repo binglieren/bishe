@@ -16,11 +16,28 @@ export const sendMessage = (data) => request.post('/chat/send', data);
 export const deleteSession = (sessionId) =>
   request.delete(`/chat/session/${sessionId}`);
 
-// 绑定/解绑会话的知识库（传 null 解绑）
+// 绑定/解绑会话的知识库（传 null 解绑，兼容旧版）
 export const bindSessionKnowledgeBase = (sessionId, knowledgeBaseId) =>
   request.patch(`/chat/session/${sessionId}/knowledge-base`, {
     knowledgeBaseId: knowledgeBaseId ?? null,
   });
+
+// 多知识库绑定（新接口）
+export const setKnowledgeBases = (sessionId, knowledgeBaseIds) =>
+  request.put(`/chat/session/${sessionId}/knowledge-bases`, { knowledgeBaseIds });
+
+export const addKnowledgeBase = (sessionId, kbId) =>
+  request.post(`/chat/session/${sessionId}/knowledge-bases/${kbId}`);
+
+export const removeKnowledgeBase = (sessionId, kbId) =>
+  request.delete(`/chat/session/${sessionId}/knowledge-bases/${kbId}`);
+
+export const getKnowledgeBases = (sessionId) =>
+  request.get(`/chat/session/${sessionId}/knowledge-bases`);
+
+// 会话级自定义 Prompt
+export const setSystemPrompt = (sessionId, systemPrompt) =>
+  request.patch(`/chat/session/${sessionId}/system-prompt`, { systemPrompt });
 
 // 切换深度思考模式
 export const toggleThinking = (sessionId, thinkingEnabled) =>
