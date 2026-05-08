@@ -452,9 +452,10 @@ public class LlmService {
                                 .map(line -> line.substring(6))
                                 .handle((String json, reactor.core.publisher.SynchronousSink<StreamChatEvent> sink) -> {
                                     StreamChatEvent event = extractStreamEvent(json);
-                                    if (event != null && event.getText() != null && !event.getText().isEmpty()) {
-                                        sink.next(event);
-                                    }
+                                    if (event == null || event.getText() == null || event.getText().isEmpty()) return;
+                                    // 未开启深度思考时不暴露 reasoning_content
+                                    if (!thinkingEnabled && "reasoning".equals(event.getType())) return;
+                                    sink.next(event);
                                 });
                     }
                     return response.bodyToMono(String.class)
