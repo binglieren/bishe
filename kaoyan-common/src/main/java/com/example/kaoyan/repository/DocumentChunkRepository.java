@@ -43,4 +43,18 @@ public interface DocumentChunkRepository extends JpaRepository<DocumentChunk, Lo
             "LIMIT :limit",
             nativeQuery = true)
     List<DocumentChunk> findSimilarChunksByKbId(Long kbId, String queryVector, int limit);
+
+    /** 多知识库联合向量检索 — 在多个指定知识库中按相似度排序 */
+    @Query(value = "SELECT dc.*, d.original_filename, d.knowledge_base_id, " +
+            "1 - (dc.embedding <=> CAST(:queryVector AS vector)) AS _score " +
+            "FROM document_chunk dc " +
+            "JOIN document d ON dc.document_id = d.id " +
+            "WHERE d.knowledge_base_id = ANY(CAST(:kbIds AS bigint[])) " +
+            "AND d.enabled = TRUE " +
+            "ORDER BY dc.embedding <=> CAST(:queryVector AS vector) " +
+            "LIMIT :limit",
+            nativeQuery = true)
+    List<Object[]> findSimilarChunksInKbs(@org.springframework.data.repository.query.Param("kbIds") String kbIds,
+                                           @org.springframework.data.repository.query.Param("queryVector") String queryVector,
+                                           @org.springframework.data.repository.query.Param("limit") int limit);
 }

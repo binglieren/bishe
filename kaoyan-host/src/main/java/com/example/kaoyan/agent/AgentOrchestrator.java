@@ -71,9 +71,27 @@ public class AgentOrchestrator {
         result.setLabel(getLabel(agentType));
 
         List<Map<String, String>> messages = new ArrayList<>();
-        // System prompt
-        String systemPrompt = buildSystemPrompt(agentType);
-        messages.add(Map.of("role", "system", "content", systemPrompt));
+        // System prompt — 优先用会话级 prompt，其次 Agent 自身 prompt
+        String basePrompt;
+        if (context.getSystemPrompt() != null && !context.getSystemPrompt().isBlank()) {
+            basePrompt = context.getSystemPrompt();
+        } else {
+            basePrompt = buildSystemPrompt(agentType);
+        }
+
+        // F8: 注入知识库上下文
+        if (context.getKnowledgeBaseIds() != null && !context.getKnowledgeBaseIds().isEmpty()) {
+            basePrompt += "\n\n[系统信息] 当前会话已绑定以下知识库：";
+            List<String> names = context.getKnowledgeBaseNames();
+            List<Long> ids = context.getKnowledgeBaseIds();
+            for (int i = 0; i < ids.size(); i++) {
+                String name = names != null && i < names.size() ? names.get(i) : "知识库#" + ids.get(i);
+                basePrompt += "\n- " + name + " (ID:" + ids.get(i) + ")";
+            }
+            basePrompt += "\n调用 search_knowledge_base 工具时，如未指定 knowledge_base_id，默认搜索以上全部知识库。";
+        }
+
+        messages.add(Map.of("role", "system", "content", basePrompt));
 
         // 注入上下文消息
         if (extraContext != null && !extraContext.isEmpty()) {

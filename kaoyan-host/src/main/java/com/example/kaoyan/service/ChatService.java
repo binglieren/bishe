@@ -3,12 +3,8 @@ package com.example.kaoyan.service;
 import com.example.kaoyan.agent.AgentContext;
 import com.example.kaoyan.agent.AgentOrchestrator;
 import com.example.kaoyan.dto.ChatSessionDTO;
-import com.example.kaoyan.entity.ChatMessage;
-import com.example.kaoyan.entity.ChatSession;
-import com.example.kaoyan.entity.DocumentChunk;
-import com.example.kaoyan.repository.ChatMessageRepository;
-import com.example.kaoyan.repository.ChatSessionRepository;
-import com.example.kaoyan.repository.DocumentChunkRepository;
+import com.example.kaoyan.entity.*;
+import com.example.kaoyan.repository.*;
 import com.example.kaoyan.util.AgentDebugLog;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -25,9 +21,14 @@ public class ChatService {
     private final ChatSessionRepository chatSessionRepository;
     private final ChatMessageRepository chatMessageRepository;
     private final DocumentChunkRepository documentChunkRepository;
+    private final SessionKbBindingRepository sessionKbBindingRepository;
+    private final KnowledgeBaseRepository knowledgeBaseRepository;
+    private final DocumentRepository documentRepository;
     private final AgentOrchestrator agentOrchestrator;
     private final LlmService llmService;
     private final QuestionExtractionService questionExtractionService;
+
+    // === 会话生命周期 ===
 
     public ChatSession createSession(Long userId, String title) {
         ChatSession session = new ChatSession();
@@ -40,9 +41,6 @@ public class ChatService {
         return chatSessionRepository.findByUserIdOrderByUpdatedAtDesc(userId);
     }
 
-    /**
-     * 获取会话列表 + 最新消息预览（用于一级页面展示）
-     */
     public List<ChatSessionDTO> getUserSessionsWithPreview(Long userId) {
         List<ChatSession> sessions = chatSessionRepository.findByUserIdOrderByUpdatedAtDesc(userId);
         List<ChatSessionDTO> dtos = new ArrayList<>(sessions.size());
@@ -52,8 +50,12 @@ public class ChatService {
             dto.setTitle(s.getTitle());
             dto.setKnowledgeBaseId(s.getKnowledgeBaseId());
             dto.setThinkingEnabled(s.getThinkingEnabled());
+            dto.setSystemPrompt(s.getSystemPrompt());
             dto.setCreatedAt(s.getCreatedAt());
             dto.setUpdatedAt(s.getUpdatedAt());
+
+            List<SessionKbBinding> bindings = sessionKbBindingRepository.findBySessionId(s.getId());
+            dto.setKnowledgeBaseIds(bindings.stream().map(SessionKbBinding::getKbId).toList());
 
             Integer count = chatMessageRepository.countBySessionId(s.getId());
             dto.setMessageCount(count == null ? 0 : count);
@@ -73,10 +75,27 @@ public class ChatService {
         return dtos;
     }
 
-    /**
-     * 调用大模型生成一个不超过 10 个汉字的短标题
-     * 失败时回退到用户消息前 16 字。
-     */
+    public List<ChatMessage> getSessionMessages(Long sessionId) {
+        return chatMessageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+    }
+
+    @Transactional
+    public void deleteSession(Long sessionId) {
+        sessionKbBindingRepository.deleteBySessionId(sessionId);
+        chatSessionRepository.deleteById(sessionId);
+    }
+
+    public ChatSession getSession(Long sessionId) {
+        return chatSessionRepository.findById(sessionId).orElse(null);
+    }
+
+    @Transactional
+    public ChatMessage saveMessage(ChatMessage msg) {
+        return chatMessageRepository.save(msg);
+    }
+
+    // === 标题生成 ===
+
     private String generateShortTitle(Long userId, String userMessage, String aiResponse, boolean hasImage) {
         try {
             String userPart = userMessage == null ? "" : userMessage;
@@ -113,16 +132,139 @@ public class ChatService {
         return t.length() > 16 ? t.substring(0, 16) + "…" : t;
     }
 
-    public List<ChatMessage> getSessionMessages(Long sessionId) {
-        return chatMessageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+    // === 系统 Prompt 解析（带会话级覆盖） ===
+
+    public String resolveSystemPrompt(Long userId, Long sessionId) {
+        if (sessionId != null) {
+            ChatSession session = chatSessionRepository.findById(sessionId).orElse(null);
+            if (session != null && session.getSystemPrompt() != null && !session.getSystemPrompt().isBlank()) {
+                return session.getSystemPrompt();
+            }
+        }
+        return llmService.resolveSystemPrompt(userId);
+    }
+
+    // === 知识库绑定管理 ===
+
+    @Transactional
+    public ChatSession bindKnowledgeBase(Long userId, Long sessionId, Long kbId) {
+        ChatSession session = chatSessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
+        if (!session.getUserId().equals(userId)) throw new IllegalArgumentException("无权操作此会话");
+        session.setKnowledgeBaseId(kbId); // 兼容旧字段
+        return chatSessionRepository.save(session);
+    }
+
+    public List<Long> getSessionKnowledgeBaseIds(Long sessionId) {
+        return sessionKbBindingRepository.findBySessionId(sessionId).stream()
+                .map(SessionKbBinding::getKbId).toList();
     }
 
     @Transactional
+    public void setSessionKnowledgeBases(Long userId, Long sessionId, List<Long> kbIds) {
+        ChatSession session = chatSessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
+        if (!session.getUserId().equals(userId)) throw new IllegalArgumentException("无权操作此会话");
+
+        sessionKbBindingRepository.deleteBySessionId(sessionId);
+        if (kbIds != null) {
+            for (Long kbId : kbIds) {
+                SessionKbBinding binding = new SessionKbBinding();
+                binding.setSessionId(sessionId);
+                binding.setKbId(kbId);
+                binding.setWeight(1.0);
+                sessionKbBindingRepository.save(binding);
+            }
+        }
+        if (kbIds != null && !kbIds.isEmpty()) {
+            session.setKnowledgeBaseId(kbIds.get(0));
+        } else {
+            session.setKnowledgeBaseId(null);
+        }
+        chatSessionRepository.save(session);
+    }
+
+    @Transactional
+    public void addSessionKnowledgeBase(Long userId, Long sessionId, Long kbId) {
+        ChatSession session = chatSessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
+        if (!session.getUserId().equals(userId)) throw new IllegalArgumentException("无权操作此会话");
+
+        List<SessionKbBinding> existing = sessionKbBindingRepository.findBySessionId(sessionId);
+        if (existing.size() >= 5) throw new IllegalArgumentException("最多绑定5个知识库");
+        if (existing.stream().anyMatch(b -> b.getKbId().equals(kbId))) return;
+
+        SessionKbBinding binding = new SessionKbBinding();
+        binding.setSessionId(sessionId);
+        binding.setKbId(kbId);
+        binding.setWeight(1.0);
+        sessionKbBindingRepository.save(binding);
+
+        if (existing.isEmpty()) {
+            session.setKnowledgeBaseId(kbId);
+            chatSessionRepository.save(session);
+        }
+    }
+
+    @Transactional
+    public void removeSessionKnowledgeBase(Long userId, Long sessionId, Long kbId) {
+        ChatSession session = chatSessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
+        if (!session.getUserId().equals(userId)) throw new IllegalArgumentException("无权操作此会话");
+
+        sessionKbBindingRepository.deleteBySessionIdAndKbId(sessionId, kbId);
+
+        List<SessionKbBinding> remaining = sessionKbBindingRepository.findBySessionId(sessionId);
+        session.setKnowledgeBaseId(remaining.isEmpty() ? null : remaining.get(0).getKbId());
+        chatSessionRepository.save(session);
+    }
+
+    // === 会话 Prompt 设置 ===
+
+    @Transactional
+    public ChatSession setSessionSystemPrompt(Long userId, Long sessionId, String systemPrompt) {
+        ChatSession session = chatSessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
+        if (!session.getUserId().equals(userId)) throw new IllegalArgumentException("无权操作此会话");
+        session.setSystemPrompt(systemPrompt);
+        return chatSessionRepository.save(session);
+    }
+
+    // === Thinking 切换 ===
+
+    @Transactional
+    public ChatSession toggleThinking(Long userId, Long sessionId, boolean enabled) {
+        ChatSession session = chatSessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
+        if (!session.getUserId().equals(userId)) throw new IllegalArgumentException("无权操作");
+        session.setThinkingEnabled(enabled);
+        return chatSessionRepository.save(session);
+    }
+
+    // === 消息渲染缓存 ===
+
+    @Transactional
+    public void updateMessageRender(Long userId, Long messageId,
+                                    String contentHtml, String renderMeta) {
+        ChatMessage msg = chatMessageRepository.findById(messageId)
+                .orElseThrow(() -> new IllegalArgumentException("消息不存在"));
+        ChatSession session = chatSessionRepository.findById(msg.getSessionId())
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
+        if (!session.getUserId().equals(userId)) throw new IllegalArgumentException("无权更新此消息");
+        msg.setContentHtml(contentHtml);
+        msg.setRenderMeta(renderMeta);
+        chatMessageRepository.save(msg);
+    }
+
+    // ================================================================
+    // 核心：发送消息（多知识库 RAG + 结构化上下文 + 会话级 Prompt）
+    // ================================================================
+
+    @Transactional
     public ChatMessage sendMessage(Long userId, Long sessionId, String userMessage, String imageBase64) {
-        // #region agent log
         AgentDebugLog.ndjson("H1b", "ChatService.sendMessage:entry", "start",
                 "{\"userId\":" + userId + ",\"sessionId\":" + sessionId + "}");
-        // #endregion
+
         ChatMessage userMsg = new ChatMessage();
         userMsg.setSessionId(sessionId);
         userMsg.setRole("user");
@@ -132,50 +274,30 @@ public class ChatService {
 
         boolean hasImage = imageBase64 != null && !imageBase64.isBlank();
 
-        // 只有会话绑定了知识库时才做 RAG 检索
-        ChatSession sessionForRag = chatSessionRepository.findById(sessionId).orElse(null);
-        Long kbId = sessionForRag != null ? sessionForRag.getKnowledgeBaseId() : null;
-
-        String context = "";
-        if (kbId != null) {
-            try {
-                float[] queryVector = llmService.getEmbedding(userMessage, userId);
-                // #region agent log
-                AgentDebugLog.ndjson("H2", "ChatService.sendMessage:afterEmbedding", "embedding ok",
-                        "{\"dim\":" + queryVector.length + ",\"kbId\":" + kbId + "}");
-                // #endregion
-                String vectorStr = llmService.vectorToString(queryVector);
-
-                List<DocumentChunk> relevantChunks = documentChunkRepository.findSimilarChunksInKb(userId, kbId, vectorStr, 5);
-                // #region agent log
-                AgentDebugLog.ndjson("H3", "ChatService.sendMessage:afterRag", "similar chunks",
-                        "{\"count\":" + relevantChunks.size() + ",\"kbId\":" + kbId + "}");
-                // #endregion
-                context = relevantChunks.stream()
-                        .map(DocumentChunk::getContent)
-                        .collect(Collectors.joining("\n\n---\n\n"));
-            } catch (Exception e) {
-                // #region agent log
-                AgentDebugLog.ndjson("H2skip", "ChatService.sendMessage:embeddingSkipped", "embedding unavailable, skipping RAG", "{}");
-                // #endregion
-            }
-        } else {
-            // #region agent log
-            AgentDebugLog.ndjson("H2none", "ChatService.sendMessage:noKb", "session has no KB, skip RAG", "{}");
-            // #endregion
-        }
-
         List<ChatMessage> history = chatMessageRepository.findTop10BySessionIdOrderByCreatedAtDesc(sessionId);
         Collections.reverse(history);
 
-        String systemPrompt = llmService.resolveSystemPrompt(userId);
-        if (!context.isEmpty()) {
-            systemPrompt += "\n\n参考资料：\n" + context;
+        // === 1. 构建查询文本（F3：用最近3轮对话拼接） ===
+        String queryText = buildQueryText(userMessage, history, userMsg.getId());
+
+        // === 2. 多知识库 RAG 检索 + 结构化上下文（F2 + F4） ===
+        String ragContext = buildRagContext(queryText, sessionId, userId, userMessage);
+
+        // === 3. 解析系统 Prompt（F1：会话级覆盖） ===
+        String systemPrompt = resolveSystemPrompt(userId, sessionId);
+        if (!ragContext.isEmpty()) {
+            systemPrompt += "\n\n" + ragContext;
+        }
+
+        // === 4. 计算 token 预算（F6） ===
+        int estimatedTokens = estimateTokens(systemPrompt, history, userMessage);
+        boolean needsCompression = estimatedTokens > 7000; // 约 maxTokens 的 70%
+        if (needsCompression) {
+            history = compressHistory(history, userId);
         }
 
         String aiResponse;
         if (hasImage) {
-            // 多模态路径：构建含图片的消息
             List<Map<String, Object>> multimodalMessages = new ArrayList<>();
             multimodalMessages.add(Map.of("role", "system", "content", systemPrompt));
 
@@ -185,20 +307,17 @@ public class ChatService {
                 }
             }
 
-            // 当前用户消息：文本 + 图片
             List<Map<String, Object>> contentParts = new ArrayList<>();
             contentParts.add(Map.of("type", "text", "text", userMessage));
             contentParts.add(Map.of("type", "image_url", "image_url",
                     Map.of("url", "data:image/jpeg;base64," + imageBase64)));
             multimodalMessages.add(Map.of("role", "user", "content", contentParts));
 
-            // #region agent log
             AgentDebugLog.ndjson("H4", "ChatService.sendMessage:beforeLlm", "calling multimodal chat",
                     "{\"messageCount\":" + multimodalMessages.size() + ",\"hasImage\":true}");
-            // #endregion
             aiResponse = llmService.chatMultimodal(multimodalMessages, userId);
         } else {
-            // Agent 路径：通过 Supervisor + MCP 工具协同回答
+            // Agent 路径（F8：注入知识库上下文到 Agent）
             AgentContext agentCtx = new AgentContext(userId, String.valueOf(sessionId));
             List<Map<String, String>> agentHistory = new ArrayList<>();
             for (ChatMessage msg : history) {
@@ -208,16 +327,25 @@ public class ChatService {
             }
             agentCtx.setHistory(agentHistory);
 
-            // #region agent log
+            // F8: 注入绑定的知识库信息
+            List<SessionKbBinding> bindings = sessionKbBindingRepository.findBySessionId(sessionId);
+            if (!bindings.isEmpty()) {
+                List<Long> kbIds = bindings.stream().map(SessionKbBinding::getKbId).toList();
+                agentCtx.setKnowledgeBaseIds(kbIds);
+                List<String> kbNames = knowledgeBaseRepository.findAllById(kbIds).stream()
+                        .map(KnowledgeBase::getName).toList();
+                agentCtx.setKnowledgeBaseNames(kbNames);
+            }
+
+            // 注入 systemPrompt 到 Agent 上下文
+            agentCtx.setSystemPrompt(systemPrompt);
+
             AgentDebugLog.ndjson("H4", "ChatService.sendMessage:beforeAgent", "calling agent orchestrator",
                     "{\"messageCount\":" + agentHistory.size() + "}");
-            // #endregion
             aiResponse = agentOrchestrator.execute(userMessage, agentCtx);
         }
-        // #region agent log
         AgentDebugLog.ndjson("H4ok", "ChatService.sendMessage:afterLlm", "chat ok",
                 "{\"replyLen\":" + (aiResponse != null ? aiResponse.length() : 0) + "}");
-        // #endregion
 
         ChatMessage assistantMsg = new ChatMessage();
         assistantMsg.setSessionId(sessionId);
@@ -227,13 +355,11 @@ public class ChatService {
 
         ChatSession session = chatSessionRepository.findById(sessionId).orElse(null);
         if (session != null && "新对话".equals(session.getTitle())) {
-            // 首次对话：调用 LLM 生成简短主题标题（失败回退到用户消息前 16 字）
             String title = generateShortTitle(userId, userMessage, aiResponse, hasImage);
             session.setTitle(title);
             chatSessionRepository.save(session);
         }
 
-        // 拍照搜题：异步提取题目结构并保存到用户题库（后台执行，不阻塞响应）
         if (hasImage) {
             final Long finalUserId = userId;
             final Long finalSessionId = sessionId;
@@ -246,61 +372,150 @@ public class ChatService {
         return assistantMsg;
     }
 
-    @Transactional
-    public void deleteSession(Long sessionId) {
-        chatSessionRepository.deleteById(sessionId);
+    // ================================================================
+    // RAG 上下文构建
+    // ================================================================
+
+    /**
+     * F3: 用最近3轮对话 + 当前消息拼接为查询文本，提高检索精准度
+     */
+    private String buildQueryText(String userMessage, List<ChatMessage> history, Long currentMsgId) {
+        StringBuilder sb = new StringBuilder();
+        int count = 0;
+        for (int i = history.size() - 1; i >= 0 && count < 6; i--) {
+            ChatMessage msg = history.get(i);
+            if (msg.getId().equals(currentMsgId)) continue;
+            if (msg.getContent() != null && !msg.getContent().isBlank()) {
+                sb.insert(0, msg.getContent() + " ");
+                count++;
+            }
+        }
+        sb.append(userMessage);
+        return sb.toString();
     }
 
     /**
-     * 更新消息的预渲染 HTML（前端转译完 LaTeX 后回传，跨设备永久缓存）。
-     *
-     * <p>仅允许该消息所属会话的拥有者更新；非自己的消息抛 IllegalArgumentException
-     * 由 GlobalExceptionHandler 统一返回 400/403。
+     * F2 + F4: 多知识库联合检索 + 结构化上下文注入
      */
-    @Transactional
-    public void updateMessageRender(Long userId, Long messageId,
-                                     String contentHtml, String renderMeta) {
-        ChatMessage msg = chatMessageRepository.findById(messageId)
-                .orElseThrow(() -> new IllegalArgumentException("消息不存在"));
-        ChatSession session = chatSessionRepository.findById(msg.getSessionId())
-                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
-        if (!session.getUserId().equals(userId)) {
-            throw new IllegalArgumentException("无权更新此消息");
+    private String buildRagContext(String queryText, Long sessionId, Long userId, String userMessage) {
+        List<SessionKbBinding> bindings = sessionKbBindingRepository.findBySessionId(sessionId);
+        if (bindings.isEmpty()) return "";
+
+        try {
+            float[] queryVector = llmService.getEmbedding(queryText, userId);
+            String vectorStr = llmService.vectorToString(queryVector);
+
+            // 多知识库检索 — 按 kbIds 数组一次性查询
+            String kbIdsArray = "{" + bindings.stream()
+                    .map(b -> b.getKbId().toString())
+                    .collect(Collectors.joining(",")) + "}";
+
+            List<Object[]> rawResults = documentChunkRepository.findSimilarChunksInKbs(kbIdsArray, vectorStr, 8);
+
+            // 按知识库分组，限制每库 top-3
+            Map<Long, List<Object[]>> grouped = new LinkedHashMap<>();
+            for (Object[] row : rawResults) {
+                Long kbId = ((Number) row[2]).longValue();
+                grouped.computeIfAbsent(kbId, k -> new ArrayList<>()).add(row);
+                if (grouped.get(kbId).size() >= 3) {
+                    // 跳过超限行
+                }
+            }
+
+            // 构建结构化上下文
+            StringBuilder ctx = new StringBuilder("## 参考资料（来自已绑定的知识库）\n\n");
+
+            // 知识库元信息
+            List<Long> kbIds = bindings.stream().map(SessionKbBinding::getKbId).toList();
+            List<KnowledgeBase> kbs = knowledgeBaseRepository.findAllById(kbIds);
+            ctx.append("### 已绑定的知识库\n");
+            for (KnowledgeBase kb : kbs) {
+                long docCount = documentRepository.countByKnowledgeBaseIdAndEnabledTrue(kb.getId());
+                ctx.append("- **").append(kb.getName()).append("**");
+                if (kb.getDescription() != null && !kb.getDescription().isBlank()) {
+                    ctx.append("：").append(kb.getDescription());
+                }
+                ctx.append("（").append(docCount).append(" 份文档）\n");
+            }
+
+            if (!rawResults.isEmpty()) {
+                ctx.append("\n### 相关文档片段\n\n");
+                int totalShown = 0;
+                for (Map.Entry<Long, List<Object[]>> entry : grouped.entrySet()) {
+                    Long kbId = entry.getKey();
+                    String kbName = kbs.stream()
+                            .filter(k -> k.getId().equals(kbId))
+                            .findFirst().map(KnowledgeBase::getName).orElse("未知知识库");
+
+                    for (Object[] row : entry.getValue()) {
+                        if (totalShown >= 6) break;
+                        String content = row[0] instanceof DocumentChunk c ? c.getContent() : String.valueOf(row[0]);
+                        String docName = row.length > 1 ? String.valueOf(row[1]) : "未知文档";
+                        Double score = null;
+                        if (row.length > 3 && row[3] instanceof Double d) score = d;
+
+                        ctx.append("> **[知识库「").append(kbName).append("」]《").append(docName).append("》");
+                        if (score != null) {
+                            double pct = Math.round(score * 100);
+                            ctx.append(" 相关度: ").append((int) pct).append("%");
+                        }
+                        ctx.append("**\n>\n");
+                        String trimmed = content.length() > 500 ? content.substring(0, 500) + "…" : content;
+                        ctx.append("> ").append(trimmed.replace("\n", "\n> ")).append("\n>\n");
+                        totalShown++;
+                    }
+                    if (totalShown >= 6) break;
+                }
+            }
+
+            return ctx.toString();
+        } catch (Exception e) {
+            AgentDebugLog.ndjson("H2skip", "ChatService.buildRagContext", "RAG failed", "{\"error\":\"" + e.getMessage() + "\"}");
+            return "";
         }
-        msg.setContentHtml(contentHtml);
-        msg.setRenderMeta(renderMeta);
-        chatMessageRepository.save(msg);
     }
 
-    /**
-     * 将会话绑定到指定知识库（kbId 传 null 可取消绑定）
-     */
-    @Transactional
-    public ChatSession bindKnowledgeBase(Long userId, Long sessionId, Long kbId) {
-        ChatSession session = chatSessionRepository.findById(sessionId)
-                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
-        if (!session.getUserId().equals(userId)) {
-            throw new IllegalArgumentException("无权操作此会话");
+    // ================================================================
+    // Token 估算与上下文压缩（F6）
+    // ================================================================
+
+    private int estimateTokens(String systemPrompt, List<ChatMessage> history, String userMessage) {
+        int total = 0;
+        if (systemPrompt != null) total += systemPrompt.length() / 2;
+        for (ChatMessage msg : history) {
+            if (msg.getContent() != null) total += msg.getContent().length() / 2;
         }
-        session.setKnowledgeBaseId(kbId);
-        return chatSessionRepository.save(session);
+        if (userMessage != null) total += userMessage.length() / 2;
+        return total;
     }
 
-    @Transactional
-    public ChatMessage saveMessage(ChatMessage msg) {
-        return chatMessageRepository.save(msg);
-    }
+    private List<ChatMessage> compressHistory(List<ChatMessage> history, Long userId) {
+        if (history.size() <= 4) return history;
 
-    @Transactional
-    public ChatSession toggleThinking(Long userId, Long sessionId, boolean enabled) {
-        ChatSession session = chatSessionRepository.findById(sessionId)
-                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
-        if (!session.getUserId().equals(userId)) throw new IllegalArgumentException("无权操作");
-        session.setThinkingEnabled(enabled);
-        return chatSessionRepository.save(session);
-    }
+        int compressCount = history.size() - 4;
+        StringBuilder toSummarize = new StringBuilder();
+        for (int i = 0; i < compressCount; i++) {
+            ChatMessage msg = history.get(i);
+            toSummarize.append(msg.getRole()).append(": ").append(msg.getContent()).append("\n");
+        }
 
-    public ChatSession getSession(Long sessionId) {
-        return chatSessionRepository.findById(sessionId).orElse(null);
+        try {
+            List<Map<String, String>> summaryPrompt = new ArrayList<>();
+            summaryPrompt.add(Map.of("role", "system", "content",
+                    "你将一段对话历史压缩成一条简短摘要（不超过200字），仅保留关键信息：讨论的主题、用户问题、AI回答要点。只输出摘要本身。"));
+            summaryPrompt.add(Map.of("role", "user", "content", toSummarize.toString()));
+            String summary = llmService.chat(summaryPrompt, userId);
+
+            ChatMessage summaryMsg = new ChatMessage();
+            summaryMsg.setRole("system");
+            summaryMsg.setContent("[对话摘要] " + (summary != null ? summary : "之前的对话内容"));
+
+            List<ChatMessage> compressed = new ArrayList<>();
+            compressed.add(summaryMsg);
+            compressed.addAll(history.subList(compressCount, history.size()));
+            return compressed;
+        } catch (Exception e) {
+            return history.subList(history.size() - 4, history.size());
+        }
     }
 }
