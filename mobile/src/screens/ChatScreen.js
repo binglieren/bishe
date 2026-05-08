@@ -69,7 +69,106 @@ export default function ChatScreen({ route, navigation }) {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const streamingRef = useRef(false);
 
-  // ...existing code...
+  const [popoverVisible, setPopoverVisible] = useState(false);
+  const [popoverMsg, setPopoverMsg] = useState(null);
+  const [snackVisible, setSnackVisible] = useState(false);
+  const [snackMsg, setSnackMsg] = useState('');
+  const [selectedImage, setSelectedImage] = useState(null);
+
+  const [recording, setRecording] = useState(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [recordSec, setRecordSec] = useState(0);
+  const [willCancel, setWillCancel] = useState(false);
+  const recordTimerRef = useRef(null);
+  const recordingRef = useRef(null);
+  const recordStartTsRef = useRef(0);
+  const willCancelRef = useRef(false);
+  const stoppingRef = useRef(false);
+  const stopPendingRef = useRef(false);
+
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const listRef = useRef(null);
+  const initialScrolledRef = useRef(false);
+  const lastMsgCountRef = useRef(0);
+  const scrollSettleRef = useRef(null);
+
+  const [ttsLoadingIndex, setTtsLoadingIndex] = useState(null);
+  const [ttsPlayingIndex, setTtsPlayingIndex] = useState(null);
+  const ttsSoundRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (ttsSoundRef.current) {
+        ttsSoundRef.current.unloadAsync().catch(() => {});
+        ttsSoundRef.current = null;
+      }
+    };
+  }, []);
+
+  const showPopover = (item, index) => {
+    if (!item.content) return;
+    setPopoverMsg({ content: item.content, role: item.role, index });
+    setPopoverVisible(true);
+  };
+
+  const dismissPopover = () => {
+    setPopoverVisible(false);
+    setPopoverMsg(null);
+  };
+
+  const handlePopoverFavorite = () => {
+    dismissPopover();
+    setSnackMsg('收藏功能即将上线');
+    setSnackVisible(true);
+  };
+
+  const handlePopoverShare = () => {
+    dismissPopover();
+    setSnackMsg('分享功能即将上线');
+    setSnackVisible(true);
+  };
+
+  const handleToggleTts = async (text, index) => {
+    if (ttsPlayingIndex === index && ttsSoundRef.current) {
+      try { await ttsSoundRef.current.stopAsync(); } catch {}
+      try { await ttsSoundRef.current.unloadAsync(); } catch {}
+      ttsSoundRef.current = null;
+      setTtsPlayingIndex(null);
+      return;
+    }
+    if (ttsSoundRef.current) {
+      try { await ttsSoundRef.current.unloadAsync(); } catch {}
+      ttsSoundRef.current = null;
+      setTtsPlayingIndex(null);
+    }
+    if (!text || !text.trim()) return;
+    try {
+      setTtsLoadingIndex(index);
+      const res = await synthesizeSpeech(text);
+      const audioBase64 = res?.data?.audio;
+      const mimeType = res?.data?.mimeType || 'audio/wav';
+      if (!audioBase64) throw new Error('未获取到音频');
+      const uri = `data:${mimeType};base64,${audioBase64}`;
+      const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: true });
+      ttsSoundRef.current = sound;
+      setTtsPlayingIndex(index);
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status?.didJustFinish) {
+          sound.unloadAsync().catch(() => {});
+          if (ttsSoundRef.current === sound) ttsSoundRef.current = null;
+          setTtsPlayingIndex((cur) => (cur === index ? null : cur));
+        }
+      });
+    } catch (err) {
+      const backendMsg = err?.response?.data?.message;
+      setSnackMsg('朗读失败：' + (backendMsg || err?.message || '朗读失败'));
+      setSnackVisible(true);
+      setTtsPlayingIndex(null);
+    } finally {
+      setTtsLoadingIndex(null);
+    }
+  };
 
   useEffect(() => {
     if (sessionId == null) return;
