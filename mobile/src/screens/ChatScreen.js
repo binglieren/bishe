@@ -22,7 +22,6 @@ import {
   Portal,
   Dialog,
   RadioButton,
-  Checkbox,
   Button,
 } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
@@ -39,7 +38,6 @@ import {
   transcribeAudio,
   synthesizeSpeech,
   bindSessionKnowledgeBase,
-  setKnowledgeBases,
   toggleThinking,
   patchMessageRender,
 } from '../api/chat';
@@ -56,47 +54,59 @@ import { prerenderMessage, hasMath } from '../components/math/renderLatex';
 export default function ChatScreen({ route, navigation }) {
   const initialSessionId = route?.params?.sessionId || null;
   const initialTitle = route?.params?.title || '新对话';
-  const initialKbIds = route?.params?.knowledgeBaseIds || [];
+  const initialKbId = route?.params?.knowledgeBaseId ?? null;
 
   const [sessionId, setSessionId] = useState(initialSessionId);
-  const [selectedKbIds, setSelectedKbIds] = useState(initialKbIds);
+  const [selectedKbId, setSelectedKbId] = useState(initialKbId);
   const [kbList, setKbList] = useState([]);
-  const [thinkingEnabled, setThinkingEnabled] = useState(route?.params?.thinkingEnabled ?? false);
   const [kbDialogVisible, setKbDialogVisible] = useState(false);
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const streamingRef = useRef(false);
+  const [expandedReasoning, setExpandedReasoning] = useState({});
 
+  // 长按弹出小图标栏
   const [popoverVisible, setPopoverVisible] = useState(false);
-  const [popoverMsg, setPopoverMsg] = useState(null);
+  const [popoverMsg, setPopoverMsg] = useState(null); // { content, role, index }
   const [snackVisible, setSnackVisible] = useState(false);
   const [snackMsg, setSnackMsg] = useState('');
   const [selectedImage, setSelectedImage] = useState(null);
 
-  const [recording, setRecording] = useState(null);
+  // ── 语音输入状态 ──────────────────────────────
+  const [recording, setRecording] = useState(null);          // Audio.Recording instance
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [recordSec, setRecordSec] = useState(0);
-  const [willCancel, setWillCancel] = useState(false);
+  const [recordSec, setRecordSec] = useState(0);             // 当前录音秒数（仅 UI 显示）
+  const [willCancel, setWillCancel] = useState(false);       // 上滑预取消状态
   const recordTimerRef = useRef(null);
-  const recordingRef = useRef(null);
-  const recordStartTsRef = useRef(0);
+  const recordingRef = useRef(null);                         // ref 版本，给异步流程和卸载使用
+  const recordStartTsRef = useRef(0);                        // 录音真实开始时间戳（避免闭包陷阱）
   const willCancelRef = useRef(false);
-  const stoppingRef = useRef(false);
-  const stopPendingRef = useRef(false);
-
+  const stoppingRef = useRef(false);                         // 正在停止中，防双击重复 unload
+  const stopPendingRef = useRef(false);                      // 录音未开始就收到停止指令
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // 消息列表 ref
   const listRef = useRef(null);
+  // 是否已完成首次"贴底"定位（历史消息加载后）
   const initialScrolledRef = useRef(false);
+  // 上一次的消息条数；条数增加 = 新消息到来 → 滚到底
+  // 这里只跟 messages.length 联动，不再监听 onContentSizeChange，
+  // 避免被 MathText 内 WebView 异步测高反复唤醒造成"上下跳"循环
   const lastMsgCountRef = useRef(0);
+  // 首次加载 3s 内 onContentSizeChange 触发追底；null = 已关闭
   const scrollSettleRef = useRef(null);
 
+  // ── TTS 朗读状态 ───────────────────────────────
+  // 同一时刻只允许一段语音播放；ttsLoadingIndex 表示正在请求音频的消息下标，
+  // ttsPlayingIndex 表示正在播放的消息下标。
   const [ttsLoadingIndex, setTtsLoadingIndex] = useState(null);
   const [ttsPlayingIndex, setTtsPlayingIndex] = useState(null);
   const ttsSoundRef = useRef(null);
 
+  // 卸载时停止 TTS 播放，防止泄漏
   useEffect(() => {
     return () => {
       if (ttsSoundRef.current) {
@@ -106,6 +116,7 @@ export default function ChatScreen({ route, navigation }) {
     };
   }, []);
 
+  // ── 弹出小图标操作栏（由 ⋮ 按钮触发） ──
   const showPopover = (item, index) => {
     if (!item.content) return;
     setPopoverMsg({ content: item.content, role: item.role, index });
@@ -129,7 +140,12 @@ export default function ChatScreen({ route, navigation }) {
     setSnackVisible(true);
   };
 
+  /**
+   * 朗读 / 停止朗读某条 AI 回复。
+   * 同条消息再点一次 = 停止；点别的消息 = 切换。
+   */
   const handleToggleTts = async (text, index) => {
+    // 同条正在播 → 停止
     if (ttsPlayingIndex === index && ttsSoundRef.current) {
       try { await ttsSoundRef.current.stopAsync(); } catch {}
       try { await ttsSoundRef.current.unloadAsync(); } catch {}
@@ -137,11 +153,13 @@ export default function ChatScreen({ route, navigation }) {
       setTtsPlayingIndex(null);
       return;
     }
+    // 别条还在播 → 先卸掉
     if (ttsSoundRef.current) {
       try { await ttsSoundRef.current.unloadAsync(); } catch {}
       ttsSoundRef.current = null;
       setTtsPlayingIndex(null);
     }
+
     if (!text || !text.trim()) return;
     try {
       setTtsLoadingIndex(index);
@@ -149,10 +167,15 @@ export default function ChatScreen({ route, navigation }) {
       const audioBase64 = res?.data?.audio;
       const mimeType = res?.data?.mimeType || 'audio/wav';
       if (!audioBase64) throw new Error('未获取到音频');
+
       const uri = `data:${mimeType};base64,${audioBase64}`;
-      const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: true });
+      const { sound } = await Audio.Sound.createAsync(
+        { uri },
+        { shouldPlay: true }
+      );
       ttsSoundRef.current = sound;
       setTtsPlayingIndex(index);
+
       sound.setOnPlaybackStatusUpdate((status) => {
         if (status?.didJustFinish) {
           sound.unloadAsync().catch(() => {});
@@ -161,8 +184,10 @@ export default function ChatScreen({ route, navigation }) {
         }
       });
     } catch (err) {
+      // 后端 GlobalExceptionHandler 把 RuntimeException 的 message 放在 response.data.message
       const backendMsg = err?.response?.data?.message;
-      setSnackMsg('朗读失败：' + (backendMsg || err?.message || '朗读失败'));
+      const detail = backendMsg || err?.message || '朗读失败';
+      setSnackMsg('朗读失败：' + detail);
       setSnackVisible(true);
       setTtsPlayingIndex(null);
     } finally {
@@ -170,9 +195,49 @@ export default function ChatScreen({ route, navigation }) {
     }
   };
 
+  // 把 header title 改成当前会话名
+  useEffect(() => {
+    navigation.setOptions({ title: initialTitle });
+  }, [initialTitle]);
+
+  // 加载历史消息
+  const loadMessages = async (sid) => {
+    // 切换会话时重置滚动标记，让新会话能再次执行首次贴底
+    initialScrolledRef.current = false;
+    lastMsgCountRef.current = 0;
+    if (!sid) {
+      setMessages([]);
+      return;
+    }
+    setLoadingHistory(true);
+    try {
+      const res = await getMessages(sid);
+      const list = res.data || [];
+      setMessages(list);
+      // 后台预热公式渲染缓存（无 contentHtml 的消息异步渲染 + 补传后端）
+      warmupCache(list, (msg, segments) => {
+        const meta = JSON.stringify(segments);
+        // 将 segments 存入本地缓存
+        setCached(msg.content, segments, 15).catch(() => {});
+        // 补传后端
+        if (msg.id) {
+          patchMessageRender(msg.id, {
+            contentHtml: meta,
+            renderMeta: meta,
+          }).catch(() => {});
+        }
+      }, 15, 4);
+    } catch (err) {
+      setSnackMsg('加载消息失败');
+      setSnackVisible(true);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
   useEffect(() => {
     if (sessionId == null) return;
-    if (streamingRef.current) return; // 流式进行中，不覆盖
+    if (streamingRef.current) return;
     loadMessages(sessionId);
   }, [sessionId]);
 
@@ -215,23 +280,13 @@ export default function ChatScreen({ route, navigation }) {
     })();
   }, []);
 
-  // 切换知识库（多选）
-  const handleToggleKb = async (kbId) => {
-    let newIds;
-    if (selectedKbIds.includes(kbId)) {
-      newIds = selectedKbIds.filter(id => id !== kbId);
-    } else {
-      if (selectedKbIds.length >= 5) {
-        setSnackMsg('最多绑定5个知识库');
-        setSnackVisible(true);
-        return;
-      }
-      newIds = [...selectedKbIds, kbId];
-    }
-    setSelectedKbIds(newIds);
+  // 选择/切换知识库：若已有 session，立即写到后端；否则先记住，等 session 建立后再绑
+  const handlePickKb = async (kbId) => {
+    setSelectedKbId(kbId);
+    setKbDialogVisible(false);
     if (sessionId) {
       try {
-        await setKnowledgeBases(sessionId, newIds);
+        await bindSessionKnowledgeBase(sessionId, kbId);
       } catch (err) {
         setSnackMsg(err.message || '切换知识库失败');
         setSnackVisible(true);
@@ -239,30 +294,7 @@ export default function ChatScreen({ route, navigation }) {
     }
   };
 
-  const handleApplyKbs = () => {
-    setKbDialogVisible(false);
-    if (sessionId) {
-      setKnowledgeBases(sessionId, selectedKbIds).catch(() => {});
-    }
-  };
-
-  // 切换深度思考模式
-  const handleToggleThinking = async () => {
-    if (!sessionId) {
-      setSnackMsg('请先发送一条消息建立会话');
-      setSnackVisible(true);
-      return;
-    }
-    const newVal = !thinkingEnabled;
-    setThinkingEnabled(newVal);
-    try {
-      await toggleThinking(sessionId, newVal);
-    } catch (err) {
-      setThinkingEnabled(!newVal);
-    }
-  };
-
-  const selectedKbs = kbList.filter((k) => selectedKbIds.includes(k.id));
+  const selectedKb = kbList.find((k) => k.id === selectedKbId);
 
   // ── 录音：按住开始，松开结束 → 上传识别 → 填入输入框 ──
   const startRecording = async () => {
@@ -517,7 +549,7 @@ export default function ChatScreen({ route, navigation }) {
         const res = await sendMessage(payload);
         if (!sessionId && res.data.sessionId) {
           setSessionId(res.data.sessionId);
-          if (selectedKbIds.length > 0) setKnowledgeBases(res.data.sessionId, selectedKbIds).catch(() => {});
+          if (selectedKbId) bindSessionKnowledgeBase(res.data.sessionId, selectedKbId).catch(() => {});
         }
         const aiContent = res.data.content;
         const aiId = res.data.id;
@@ -558,6 +590,7 @@ export default function ChatScreen({ route, navigation }) {
           },
           // onDone
           () => {
+            if (sessionId) return; // 已有 session
             setMessages((prev) => {
               const list = [...prev];
               const last = list[list.length - 1];
@@ -627,26 +660,19 @@ export default function ChatScreen({ route, navigation }) {
                   resizeMode="contain"
                 />
               )}
-              {/* 思考过程（可折叠） */}
               {!isUser && item.reasoningContent && item.reasoningContent.trim().length > 0 && (
-                <View style={{ marginBottom: 6 }}>
-                  <TouchableOpacity
-                    onPress={() => setExpandedReasoning(prev => ({ ...prev, [index]: !prev[index] }))}
-                    activeOpacity={0.7}
-                    style={styles.reasoningToggle}
-                  >
-                    <RNText style={styles.reasoningToggleIcon}>
-                      {expandedReasoning[index] ? '🔽' : '🧠'}
-                    </RNText>
-                    <RNText style={styles.reasoningToggleText}>
-                      思考过程 {expandedReasoning[index] ? '（点击收起）' : '（点击展开）'}
-                    </RNText>
-                  </TouchableOpacity>
-                  {expandedReasoning[index] && (
-                    <View style={styles.reasoningBox}>
-                      <RNText style={styles.reasoningText}>{item.reasoningContent}</RNText>
-                    </View>
-                  )}
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  style={{ flexDirection: 'row', alignItems: 'center', padding: 6, backgroundColor: '#F0F0F5', borderRadius: 6, marginBottom: 4 }}
+                  onPress={() => setExpandedReasoning(prev => ({ ...prev, [index]: !prev[index] }))}
+                >
+                  <RNText style={{ fontSize: 12, marginRight: 4 }}>🧠</RNText>
+                  <RNText style={{ fontSize: 11, color: '#666' }}>思考过程</RNText>
+                </TouchableOpacity>
+              )}
+              {!isUser && expandedReasoning[index] && item.reasoningContent && (
+                <View style={{ padding: 8, backgroundColor: '#F9F9FB', borderRadius: 6, borderLeftWidth: 3, borderLeftColor: '#ccc', marginBottom: 4 }}>
+                  <RNText style={{ fontSize: 12, color: '#555', lineHeight: 18 }}>{item.reasoningContent}</RNText>
                 </View>
               )}
               {!!item.content && (
@@ -718,28 +744,18 @@ export default function ChatScreen({ route, navigation }) {
       {/* 顶部：知识库接入状态 */}
       <View style={styles.kbBar}>
         <TouchableOpacity
-          style={[styles.kbChip, selectedKbs.length > 0 && styles.kbChipActive]}
+          style={[styles.kbChip, selectedKb && styles.kbChipActive]}
           activeOpacity={0.75}
           onPress={() => setKbDialogVisible(true)}
         >
           <RNText style={styles.kbChipIcon}>📚</RNText>
           <Text
-            style={[styles.kbChipText, selectedKbs.length > 0 && styles.kbChipTextActive]}
+            style={[styles.kbChipText, selectedKb && styles.kbChipTextActive]}
             numberOfLines={1}
           >
-            {selectedKbs.length > 0 ? `已接入 ${selectedKbs.length} 个知识库` : '未接入知识库'}
+            {selectedKb ? `已接入：${selectedKb.name}` : '未接入知识库'}
           </Text>
           <RNText style={styles.kbChipChevron}>⌄</RNText>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.thinkingChip, thinkingEnabled && styles.thinkingChipActive]}
-          activeOpacity={0.75}
-          onPress={handleToggleThinking}
-        >
-          <RNText style={styles.thinkingChipIcon}>{thinkingEnabled ? '🧠' : '💡'}</RNText>
-          <Text style={[styles.thinkingChipText, thinkingEnabled && styles.thinkingChipTextActive]}>
-            {thinkingEnabled ? '深度思考' : '普通模式'}
-          </Text>
         </TouchableOpacity>
       </View>
 
@@ -913,26 +929,34 @@ export default function ChatScreen({ route, navigation }) {
       {/* 知识库选择弹窗 */}
       <Portal>
         <Dialog visible={kbDialogVisible} onDismiss={() => setKbDialogVisible(false)}>
-          <Dialog.Title>为本次对话选择知识库（多选，最多5个）</Dialog.Title>
+          <Dialog.Title>为本次对话选择知识库</Dialog.Title>
           <Dialog.ScrollArea style={{ paddingHorizontal: 0, maxHeight: 400 }}>
-            {kbList.map((kb) => (
-              <Checkbox.Item
-                key={kb.id}
-                label={`${kb.name}  ·  ${kb.enabledCount || 0}/${kb.documentCount || 0} 启用`}
-                status={selectedKbIds.includes(kb.id) ? 'checked' : 'unchecked'}
-                onPress={() => handleToggleKb(kb.id)}
+            <RadioButton.Group
+              onValueChange={(v) => handlePickKb(v === 'none' ? null : Number(v))}
+              value={selectedKbId ? String(selectedKbId) : 'none'}
+            >
+              <RadioButton.Item
+                label="不接入（不使用知识库资料）"
+                value="none"
                 labelStyle={{ fontSize: 14 }}
               />
-            ))}
-            {kbList.length === 0 && (
-              <Text style={{ padding: 16, color: colors.textTertiary }}>
-                你还没有知识库，去「知识库」页面新建一个吧
-              </Text>
-            )}
+              {kbList.map((kb) => (
+                <RadioButton.Item
+                  key={kb.id}
+                  label={`${kb.name}  ·  ${kb.enabledCount || 0}/${kb.documentCount || 0} 启用`}
+                  value={String(kb.id)}
+                  labelStyle={{ fontSize: 14 }}
+                />
+              ))}
+              {kbList.length === 0 && (
+                <Text style={{ padding: 16, color: colors.textTertiary }}>
+                  你还没有知识库，去「知识库」页面新建一个吧
+                </Text>
+              )}
+            </RadioButton.Group>
           </Dialog.ScrollArea>
           <Dialog.Actions>
-            <Button onPress={() => setKbDialogVisible(false)}>取消</Button>
-            <Button onPress={handleApplyKbs}>确定</Button>
+            <Button onPress={() => setKbDialogVisible(false)}>关闭</Button>
           </Dialog.Actions>
         </Dialog>
       </Portal>
@@ -989,9 +1013,6 @@ const styles = StyleSheet.create({
 
   // 顶部知识库接入栏
   kbBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
     paddingBottom: spacing.sm,
@@ -1029,28 +1050,6 @@ const styles = StyleSheet.create({
     marginLeft: 6,
     marginTop: -2,
   },
-
-  thinkingChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  thinkingChipActive: {
-    borderColor: colors.warning,
-    backgroundColor: colors.warningSoft,
-  },
-  thinkingChipIcon: { fontSize: 14, marginRight: 4 },
-  thinkingChipText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  thinkingChipTextActive: { color: '#92400E' },
 
 
   // Empty
@@ -1348,38 +1347,5 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 14,
     letterSpacing: 1,
-  },
-
-  // 思考过程展示
-  reasoningToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 4,
-    paddingHorizontal: 6,
-    borderRadius: 6,
-    backgroundColor: '#F0F0F5',
-  },
-  reasoningToggleIcon: {
-    fontSize: 12,
-    marginRight: 6,
-  },
-  reasoningToggleText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    fontSize: 11,
-  },
-  reasoningBox: {
-    marginTop: 4,
-    padding: 8,
-    backgroundColor: '#F9F9FB',
-    borderRadius: 6,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.textTertiary,
-  },
-  reasoningText: {
-    ...typography.caption,
-    color: '#555',
-    fontSize: 12,
-    lineHeight: 18,
   },
 });
