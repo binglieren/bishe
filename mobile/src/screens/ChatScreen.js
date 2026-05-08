@@ -67,6 +67,7 @@ export default function ChatScreen({ route, navigation }) {
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [expandedReasoning, setExpandedReasoning] = useState({});
 
   // 长按弹出小图标栏
   const [popoverVisible, setPopoverVisible] = useState(false);
@@ -591,8 +592,8 @@ export default function ChatScreen({ route, navigation }) {
         }
       } else {
         // 文本消息：流式 SSE
-        const msgIdx = messages.length + 1; // 新消息的 index
-        setMessages((prev) => [...prev, { role: 'assistant', content: '', id: null, _streaming: true }]);
+        const msgIdx = messages.length + 1;
+        setMessages((prev) => [...prev, { role: 'assistant', content: '', reasoningContent: '', id: null, _streaming: true }]);
 
         await sendMessageStream(payload,
           // onToken
@@ -641,6 +642,17 @@ export default function ChatScreen({ route, navigation }) {
             if (typeof sessionData?.thinkingEnabled === 'boolean') {
               setThinkingEnabled(sessionData.thinkingEnabled);
             }
+          },
+          // onReasoning
+          (token) => {
+            setMessages((prev) => {
+              const list = [...prev];
+              const last = list[list.length - 1];
+              if (last && last._streaming) {
+                list[list.length - 1] = { ...last, reasoningContent: (last.reasoningContent || '') + token };
+              }
+              return list;
+            });
           }
         );
       }
@@ -677,6 +689,28 @@ export default function ChatScreen({ route, navigation }) {
                   style={styles.msgImage}
                   resizeMode="contain"
                 />
+              )}
+              {/* 思考过程（可折叠） */}
+              {!isUser && item.reasoningContent && item.reasoningContent.trim().length > 0 && (
+                <View style={{ marginBottom: 6 }}>
+                  <TouchableOpacity
+                    onPress={() => setExpandedReasoning(prev => ({ ...prev, [index]: !prev[index] }))}
+                    activeOpacity={0.7}
+                    style={styles.reasoningToggle}
+                  >
+                    <RNText style={styles.reasoningToggleIcon}>
+                      {expandedReasoning[index] ? '🔽' : '🧠'}
+                    </RNText>
+                    <RNText style={styles.reasoningToggleText}>
+                      思考过程 {expandedReasoning[index] ? '（点击收起）' : '（点击展开）'}
+                    </RNText>
+                  </TouchableOpacity>
+                  {expandedReasoning[index] && (
+                    <View style={styles.reasoningBox}>
+                      <RNText style={styles.reasoningText}>{item.reasoningContent}</RNText>
+                    </View>
+                  )}
+                </View>
               )}
               {!!item.content && (
                 <MathText
@@ -1377,5 +1411,38 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 14,
     letterSpacing: 1,
+  },
+
+  // 思考过程展示
+  reasoningToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+    backgroundColor: '#F0F0F5',
+  },
+  reasoningToggleIcon: {
+    fontSize: 12,
+    marginRight: 6,
+  },
+  reasoningToggleText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontSize: 11,
+  },
+  reasoningBox: {
+    marginTop: 4,
+    padding: 8,
+    backgroundColor: '#F9F9FB',
+    borderRadius: 6,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.textTertiary,
+  },
+  reasoningText: {
+    ...typography.caption,
+    color: '#555',
+    fontSize: 12,
+    lineHeight: 18,
   },
 });

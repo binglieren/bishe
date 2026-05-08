@@ -311,7 +311,13 @@ public class ChatService {
 
             for (ChatMessage msg : history) {
                 if (!msg.getId().equals(userMsg.getId())) {
-                    multimodalMessages.add(Map.of("role", msg.getRole(), "content", msg.getContent()));
+                    Map<String, Object> msgMap = new LinkedHashMap<>();
+                    msgMap.put("role", msg.getRole());
+                    msgMap.put("content", msg.getContent());
+                    if (msg.getReasoningContent() != null && !msg.getReasoningContent().isBlank()) {
+                        msgMap.put("reasoning_content", msg.getReasoningContent());
+                    }
+                    multimodalMessages.add(msgMap);
                 }
             }
 
@@ -330,7 +336,13 @@ public class ChatService {
             List<Map<String, String>> agentHistory = new ArrayList<>();
             for (ChatMessage msg : history) {
                 if (!msg.getId().equals(userMsg.getId())) {
-                    agentHistory.add(Map.of("role", msg.getRole(), "content", msg.getContent()));
+                    Map<String, String> msgMap = new LinkedHashMap<>();
+                    msgMap.put("role", msg.getRole());
+                    msgMap.put("content", msg.getContent());
+                    if (msg.getReasoningContent() != null && !msg.getReasoningContent().isBlank()) {
+                        msgMap.put("reasoning_content", msg.getReasoningContent());
+                    }
+                    agentHistory.add(msgMap);
                 }
             }
             agentCtx.setHistory(agentHistory);
@@ -570,12 +582,18 @@ public class ChatService {
 
         messages.add(Map.of("role", "system", "content", systemPrompt));
 
-        // 3. 注入对话历史（最近10条）
+        // 3. 注入对话历史（最近10条），含 reasoning_content
         List<ChatMessage> histList = chatMessageRepository.findTop10BySessionIdOrderByCreatedAtDesc(sessionId);
         Collections.reverse(histList);
         for (ChatMessage hm : histList) {
             if (hm.getId().equals(userMsgId)) continue;
-            messages.add(Map.of("role", hm.getRole(), "content", hm.getContent()));
+            Map<String, String> msgMap = new LinkedHashMap<>();
+            msgMap.put("role", hm.getRole());
+            msgMap.put("content", hm.getContent());
+            if (hm.getReasoningContent() != null && !hm.getReasoningContent().isBlank()) {
+                msgMap.put("reasoning_content", hm.getReasoningContent());
+            }
+            messages.add(msgMap);
         }
 
         messages.add(Map.of("role", "user", "content", userMessage));

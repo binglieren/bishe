@@ -32,11 +32,9 @@ public class ChatMessage {
     @Column(name = "image_base64", columnDefinition = "TEXT")
     private String imageBase64;
 
-    /**
-     * 预渲染后的 HTML（含 KaTeX 公式 → HTML 字符串）。
-     * 由前端在 AI 回复到达时同步生成并 PATCH 上传，跨设备共享。
-     * 可空：旧消息或不含公式的消息保持 null，前端会在使用时按需现场渲染。
-     */
+    @Column(name = "reasoning_content", columnDefinition = "TEXT")
+    private String reasoningContent;
+
     @Column(name = "content_html", columnDefinition = "TEXT")
     private String contentHtml;
 

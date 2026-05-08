@@ -1,5 +1,6 @@
 package com.example.kaoyan.service;
 
+import com.example.kaoyan.dto.StreamChatEvent;
 import com.example.kaoyan.entity.AiConfig;
 import com.example.kaoyan.repository.AiConfigRepository;
 import com.example.kaoyan.util.AgentDebugLog;
@@ -396,14 +397,14 @@ public class LlmService {
     }
 
     /**
-     * 流式 chat（SSE）。返回 Flux<String>，每个元素是一个 token。
+     * 流式 chat（SSE）。返回 Flux<StreamChatEvent>，区分 reasoning_content 和 content。
      */
-    public Flux<String> chatStream(List<Map<String, String>> messages, Long userId) {
+    public Flux<StreamChatEvent> chatStream(List<Map<String, String>> messages, Long userId) {
         return chatStream(messages, userId, false);
     }
 
     /** 流式 chat + thinking 模式 */
-    public Flux<String> chatStream(List<Map<String, String>> messages, Long userId, boolean thinkingEnabled) {
+    public Flux<StreamChatEvent> chatStream(List<Map<String, String>> messages, Long userId, boolean thinkingEnabled) {
         String url = resolveApiUrl(userId);
         String key = resolveApiKey(userId);
         String model = resolveChatModel(userId);
@@ -439,8 +440,8 @@ public class LlmService {
                                 })
                                 .filter(line -> !line.isBlank() && line.startsWith("data: ") && !line.equals("data: [DONE]"))
                                 .map(line -> line.substring(6))
-                                .map(this::extractStreamToken)
-                                .filter(token -> token != null && !token.isEmpty());
+                                .map(this::extractStreamEvent)
+                                .filter(event -> event != null && event.getText() != null && !event.getText().isEmpty());
                     }
                     return response.createException().flatMapMany(Flux::error);
                 })
@@ -453,18 +454,35 @@ public class LlmService {
     private final ObjectMapper streamObjectMapper = new ObjectMapper();
 
     @SuppressWarnings("unchecked")
-    private String extractStreamToken(String json) {
+    private StreamChatEvent extractStreamEvent(String json) {
         try {
             Map<String, Object> data = streamObjectMapper.readValue(json, Map.class);
             List<Map<String, Object>> choices = (List<Map<String, Object>>) data.get("choices");
-            if (choices == null || choices.isEmpty()) return "";
+            if (choices == null || choices.isEmpty()) return null;
             Map<String, Object> delta = (Map<String, Object>) choices.get(0).get("delta");
-            if (delta == null) return "";
+            if (delta == null) return null;
+
+            // 先检查 reasoning_content（思考过程）
+            Object reasoning = delta.get("reasoning_content");
+            if (reasoning != null && !reasoning.toString().isEmpty()) {
+                return StreamChatEvent.reasoning(reasoning.toString());
+            }
+
+            // 再检查 content
             Object content = delta.get("content");
-            return content != null ? content.toString() : "";
+            if (content != null && !content.toString().isEmpty()) {
+                return StreamChatEvent.content(content.toString());
+            }
+
+            return null;
         } catch (Exception e) {
-            return "";
+            return null;
         }
+    }
+
+    // 保留旧版兼容方法
+    public Flux<String> chatStreamRaw(List<Map<String, String>> messages, Long userId) {
+        return chatStream(messages, userId).map(StreamChatEvent::getText);
     }
 
     /**

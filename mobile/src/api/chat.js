@@ -77,11 +77,13 @@ export const patchMessageRender = (messageId, payload) =>
 /**
  * 流式消息（SSE）— 逐 token 回调。
  * @param {{ sessionId, message, image? }} data
- * @param {(token:string)=>void} onToken  每个 token 回调
+ * @param {(token:string)=>void} onToken  每个回答 token 回调
  * @param {(err:Error)=>void} onError   错误回调
  * @param {()=>void} onDone            完成回调
+ * @param {(session:object)=>void} onSession  session 创建回调
+ * @param {(token:string)=>void} onReasoning 思考过程 token 回调
  */
-export const sendMessageStream = (data, onToken, onError, onDone, onSession) => {
+export const sendMessageStream = (data, onToken, onError, onDone, onSession, onReasoning) => {
   return new Promise((resolve, reject) => {
     const baseUrl = request.defaults.baseURL.replace(/\/api$/, '');
     AsyncStorage.getItem('token')
@@ -96,6 +98,12 @@ export const sendMessageStream = (data, onToken, onError, onDone, onSession) => 
         es.addEventListener('session', (event) => {
           if (event.data && onSession) {
             try { onSession(JSON.parse(event.data)); } catch {}
+          }
+        });
+
+        es.addEventListener('reasoning', (event) => {
+          if (event.data && onReasoning) {
+            onReasoning(String(event.data));
           }
         });
 

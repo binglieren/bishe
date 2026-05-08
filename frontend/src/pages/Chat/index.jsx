@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
-import { Input, Button, List, Card, message, Typography, Space, Popconfirm, Modal, Select, Tag, Tooltip } from 'antd';
-import { SendOutlined, PlusOutlined, DeleteOutlined, RobotOutlined, UserOutlined, SettingOutlined, BookOutlined } from '@ant-design/icons';
+import { Input, Button, List, Card, message, Typography, Space, Popconfirm, Modal, Select, Tag, Tooltip, Collapse } from 'antd';
+import { SendOutlined, PlusOutlined, DeleteOutlined, RobotOutlined, UserOutlined, SettingOutlined, BookOutlined, BulbOutlined } from '@ant-design/icons';
 import { getSessions, getMessages, sendMessage, createSession, deleteSession, setSystemPrompt, setKnowledgeBases } from '../../api/chat';
 import { getKnowledgeBases } from '../../api/knowledgeBase';
 
@@ -192,19 +192,34 @@ export default function ChatPage() {
             </div>
           ) : (
             messages.map((msg, idx) => (
-              <div key={idx} style={{ display: 'flex', marginBottom: 16, justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                <Card
-                  size="small"
-                  style={{
-                    maxWidth: msg.role === 'user' ? '70%' : '100%',
-                    width: msg.role === 'assistant' ? '100%' : undefined,
-                    background: msg.role === 'user' ? '#1677ff' : '#f5f5f5',
-                    color: msg.role === 'user' ? '#fff' : '#000',
-                  }}
-                  styles={{ body: { color: msg.role === 'user' ? '#fff' : '#000' } }}
-                >
-                  <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
-                </Card>
+              <div key={idx} style={{ display: 'flex', marginBottom: 16, justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start', width: '100%' }}>
+                <div style={{ width: msg.role === 'assistant' ? '100%' : 'auto' }}>
+                  {/* 思考过程（可折叠） */}
+                  {msg.role === 'assistant' && msg.reasoningContent && (
+                    <Collapse
+                      ghost
+                      size="small"
+                      items={[{
+                        key: 'reasoning',
+                        label: <span><BulbOutlined style={{ marginRight: 4 }} />思考过程</span>,
+                        children: <div style={{ whiteSpace: 'pre-wrap', color: '#666', fontSize: 13, background: '#f9f9fb', padding: 8, borderRadius: 4, borderLeft: '3px solid #d9d9d9' }}>{msg.reasoningContent}</div>,
+                      }]}
+                      style={{ marginBottom: 4, background: '#fff' }}
+                    />
+                  )}
+                  <Card
+                    size="small"
+                    style={{
+                      maxWidth: msg.role === 'user' ? '70%' : '100%',
+                      width: msg.role === 'assistant' ? '100%' : undefined,
+                      background: msg.role === 'user' ? '#1677ff' : '#f5f5f5',
+                      color: msg.role === 'user' ? '#fff' : '#000',
+                    }}
+                    styles={{ body: { color: msg.role === 'user' ? '#fff' : '#000' } }}
+                  >
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
+                  </Card>
+                </div>
               </div>
             ))
           )}

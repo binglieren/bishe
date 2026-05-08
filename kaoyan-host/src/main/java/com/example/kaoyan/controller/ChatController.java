@@ -2,6 +2,7 @@ package com.example.kaoyan.controller;
 
 import com.example.kaoyan.dto.ChatRequest;
 import com.example.kaoyan.dto.ChatSessionDTO;
+import com.example.kaoyan.dto.StreamChatEvent;
 import com.example.kaoyan.dto.TranscribeRequest;
 import com.example.kaoyan.dto.TtsRequest;
 import com.example.kaoyan.entity.ChatMessage;
@@ -245,34 +246,52 @@ public class ChatController {
             try {
                 List<Map<String, String>> messages = chatService.buildStreamMessages(fUserId, finalSid, message, userMsg.getId());
 
-                Flux<String> flux = llmService.chatStream(messages, fUserId, thinking);
-                StringBuilder fullResponse = new StringBuilder();
+                Flux<StreamChatEvent> flux = llmService.chatStream(messages, fUserId, thinking);
+                StringBuilder reasoningBuf = new StringBuilder();
+                StringBuilder contentBuf = new StringBuilder();
 
-                flux.doOnNext(token -> fullResponse.append(token))
-                    .doOnComplete(() -> {
-                        ChatMessage aiMsg = new ChatMessage();
-                        aiMsg.setSessionId(finalSid);
-                        aiMsg.setRole("assistant");
-                        aiMsg.setContent(fullResponse.toString());
-                        chatService.saveMessage(aiMsg);
+                flux.doOnNext(event -> {
+                    if ("reasoning".equals(event.getType())) {
+                        reasoningBuf.append(event.getText());
+                    } else {
+                        contentBuf.append(event.getText());
+                    }
+                })
+                .doOnComplete(() -> {
+                    ChatMessage aiMsg = new ChatMessage();
+                    aiMsg.setSessionId(finalSid);
+                    aiMsg.setRole("assistant");
+                    aiMsg.setContent(contentBuf.toString());
+                    if (reasoningBuf.length() > 0) {
+                        aiMsg.setReasoningContent(reasoningBuf.toString());
+                    }
+                    chatService.saveMessage(aiMsg);
 
-                        ChatSession s = chatService.getSession(finalSid);
-                        if (s != null && "新对话".equals(s.getTitle())) {
-                            String title = chatService.generateStreamTitle(fUserId, message, fullResponse.toString());
-                            if (title != null && !title.isBlank()) {
-                                chatService.updateSessionTitle(finalSid, title);
-                            }
+                    ChatSession s = chatService.getSession(finalSid);
+                    if (s != null && "新对话".equals(s.getTitle())) {
+                        String title = chatService.generateStreamTitle(fUserId, message, contentBuf.toString());
+                        if (title != null && !title.isBlank()) {
+                            chatService.updateSessionTitle(finalSid, title);
                         }
-                    })
-                    .doOnError(err -> {
-                        try { emitter.send(SseEmitter.event().name("error").data(err.getMessage())); } catch (Exception ex) {}
-                        emitter.completeWithError(err);
-                    })
-                    .subscribe(
-                        token -> { try { emitter.send(SseEmitter.event().name("token").data(token)); } catch (Exception e) {} },
-                        error -> {},
-                        () -> { try { emitter.send(SseEmitter.event().name("done").data(Map.of())); emitter.complete(); } catch (Exception e) {} }
-                    );
+                    }
+                })
+                .doOnError(err -> {
+                    try { emitter.send(SseEmitter.event().name("error").data(err.getMessage())); } catch (Exception ex) {}
+                    emitter.completeWithError(err);
+                })
+                .subscribe(
+                    event -> {
+                        try {
+                            if ("reasoning".equals(event.getType())) {
+                                emitter.send(SseEmitter.event().name("reasoning").data(event.getText()));
+                            } else {
+                                emitter.send(SseEmitter.event().name("token").data(event.getText()));
+                            }
+                        } catch (Exception e) {}
+                    },
+                    error -> {},
+                    () -> { try { emitter.send(SseEmitter.event().name("done").data(Map.of())); emitter.complete(); } catch (Exception e) {} }
+                );
             } catch (Exception e) {
                 try { emitter.send(SseEmitter.event().name("error").data(e.getMessage())); emitter.completeWithError(e); } catch (Exception ex) {}
             }
