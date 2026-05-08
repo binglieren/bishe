@@ -1,13 +1,11 @@
 package com.example.kaoyan.controller;
 
-import com.example.kaoyan.agent.AgentContext;
-import com.example.kaoyan.agent.AgentOrchestrator;
 import com.example.kaoyan.dto.ChatRequest;
 import com.example.kaoyan.dto.ChatSessionDTO;
 import com.example.kaoyan.dto.TranscribeRequest;
 import com.example.kaoyan.dto.TtsRequest;
-import com.example.kaoyan.entity.*;
-import com.example.kaoyan.repository.*;
+import com.example.kaoyan.entity.ChatMessage;
+import com.example.kaoyan.entity.ChatSession;
 import com.example.kaoyan.service.ChatService;
 import com.example.kaoyan.service.LlmService;
 import com.example.kaoyan.util.AgentDebugLog;
@@ -26,7 +24,6 @@ import reactor.core.publisher.Flux;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/chat")
@@ -36,13 +33,7 @@ public class ChatController {
 
     private final ChatService chatService;
     private final LlmService llmService;
-    private final AgentOrchestrator agentOrchestrator;
     private final JwtUtil jwtUtil;
-    private final SessionKbBindingRepository sessionKbBindingRepository;
-    private final DocumentChunkRepository documentChunkRepository;
-    private final KnowledgeBaseRepository knowledgeBaseRepository;
-    private final ChatMessageRepository chatMessageRepository;
-    private final ChatSessionRepository chatSessionRepository;
 
     @PostMapping("/session")
     @Operation(summary = "创建对话会话")
@@ -70,18 +61,15 @@ public class ChatController {
     public Result<ChatMessage> sendMessage(Authentication auth,
                                             @Valid @RequestBody ChatRequest request) {
         Long userId = (Long) auth.getPrincipal();
-
         Long sessionId = request.getSessionId();
         if (sessionId == null) {
             ChatSession session = chatService.createSession(userId, null);
             sessionId = session.getId();
         }
-
         String um = request.getMessage();
         AgentDebugLog.ndjson("H1", "ChatController.sendMessage", "resolved session",
                 "{\"userId\":" + userId + ",\"sessionId\":" + sessionId + ",\"msgLen\":"
                         + (um != null ? um.length() : 0) + "}");
-
         return Result.success(chatService.sendMessage(userId, sessionId, request.getMessage(), request.getImage()));
     }
 
@@ -91,8 +79,6 @@ public class ChatController {
         chatService.deleteSession(sessionId);
         return Result.success("删除成功");
     }
-
-    // === F1: 会话级自定义 Prompt ===
 
     @PatchMapping("/session/{sessionId}/system-prompt")
     @Operation(summary = "设置会话级自定义系统 Prompt")
@@ -104,8 +90,6 @@ public class ChatController {
         return Result.successWithMessage(prompt != null ? "已设置自定义指令" : "已清除自定义指令",
                 chatService.setSessionSystemPrompt(userId, sessionId, prompt));
     }
-
-    // === F2: 多知识库绑定 ===
 
     @PutMapping("/session/{sessionId}/knowledge-bases")
     @Operation(summary = "设置会话绑定的知识库列表（覆盖式）")
@@ -146,10 +130,8 @@ public class ChatController {
         return Result.success(chatService.getSessionKnowledgeBaseIds(sessionId));
     }
 
-    // === 兼容旧单知识库绑定 ===
-
     @PatchMapping("/session/{sessionId}/knowledge-base")
-    @Operation(summary = "为对话会话绑定（或解绑）知识库（兼容旧版）")
+    @Operation(summary = "为对话会话绑定知识库（兼容旧版）")
     public Result<ChatSession> bindKnowledgeBase(Authentication auth,
                                                    @PathVariable Long sessionId,
                                                    @RequestBody Map<String, Long> body) {
@@ -169,8 +151,6 @@ public class ChatController {
         return Result.successWithMessage(enabled ? "已开启深度思考" : "已关闭深度思考",
                 chatService.toggleThinking(userId, sessionId, enabled));
     }
-
-    // === 语音 ===
 
     @PostMapping("/transcribe")
     @Operation(summary = "语音识别：将录音转为文字")
@@ -194,18 +174,15 @@ public class ChatController {
         AgentDebugLog.ndjson("T0", "ChatController.tts", "request",
                 "{\"userId\":" + userId + ",\"voice\":\"" + request.getVoiceName() + "\",\"len\":"
                         + (request.getText() == null ? 0 : request.getText().length()) + "}");
-        String audioBase64 = llmService.synthesizeSpeech(
-                request.getText(), request.getVoiceName(), userId);
+        String audioBase64 = llmService.synthesizeSpeech(request.getText(), request.getVoiceName(), userId);
         Map<String, String> payload = new HashMap<>();
         payload.put("audio", audioBase64);
         payload.put("mimeType", llmService.getTtsMimeType());
         return Result.success(payload);
     }
 
-    // === 渲染缓存 ===
-
     @PatchMapping("/message/{messageId}/render")
-    @Operation(summary = "保存消息的预渲染 HTML（前端 KaTeX 转译完成后回传，跨设备共享）")
+    @Operation(summary = "保存消息的预渲染 HTML")
     public Result<Void> patchMessageRender(Authentication auth,
                                             @PathVariable Long messageId,
                                             @RequestBody Map<String, String> body) {
@@ -215,10 +192,6 @@ public class ChatController {
         chatService.updateMessageRender(userId, messageId, contentHtml, renderMeta);
         return Result.success(null);
     }
-
-    // ============================================================
-    // F5: 流式端点改造 — 历史 + RAG + thinking + 自动标题
-    // ============================================================
 
     @PostMapping(value = "/send/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "真流式 SSE，支持 RAG + 历史 + thinking")
@@ -232,37 +205,23 @@ public class ChatController {
         final Object sidObj = body.get("sessionId");
         final Long reqSessionId = sidObj instanceof Number n ? n.longValue() : null;
         final String imageBase64 = (String) body.get("image");
-        final boolean hasImage = imageBase64 != null && !imageBase64.isBlank();
 
-        if (hasImage) {
+        if (imageBase64 != null && !imageBase64.isBlank()) {
             Flux<String> flux = Flux.create(sink -> {
                 try {
                     Long sid = reqSessionId != null ? reqSessionId : chatService.createSession(userId, null).getId();
                     emitter.send(SseEmitter.event().name("session").data(Map.of("sessionId", sid)));
                     ChatMessage reply = chatService.sendMessage(userId, sid, message, imageBase64);
                     String content = reply.getContent();
-                    if (content != null) {
-                        for (char c : content.toCharArray()) sink.next(String.valueOf(c));
-                    }
+                    if (content != null) for (char c : content.toCharArray()) sink.next(String.valueOf(c));
                     sink.complete();
                 } catch (Exception e) { sink.error(e); }
             });
-            flux.subscribe(
-                token -> { try { emitter.send(SseEmitter.event().name("token").data(token)); } catch (Exception ex) {} },
-                error -> { try { emitter.send(SseEmitter.event().name("error").data(error.getMessage())); emitter.completeWithError(error); } catch (Exception ex) {} },
-                () -> { try { emitter.send(SseEmitter.event().name("done").data(Map.of())); emitter.complete(); } catch (Exception ex) {} }
-            );
+            subscribeFlux(flux, emitter);
             return emitter;
         }
 
-        // === 文本路径 ===
-
-        Long sid = reqSessionId;
-        final boolean isNewSession = (sid == null);
-        if (sid == null) {
-            ChatSession session = chatService.createSession(userId, null);
-            sid = session.getId();
-        }
+        Long sid = reqSessionId != null ? reqSessionId : chatService.createSession(userId, null).getId();
         final Long finalSid = sid;
 
         // 保存用户消息
@@ -270,10 +229,10 @@ public class ChatController {
         userMsg.setSessionId(finalSid);
         userMsg.setRole("user");
         userMsg.setContent(message);
-        chatMessageRepository.save(userMsg);
+        chatService.saveMessage(userMsg);
 
         // thinking 状态
-        ChatSession session = chatSessionRepository.findById(finalSid).orElse(null);
+        ChatSession session = chatService.getSession(finalSid);
         boolean thinking = session != null && Boolean.TRUE.equals(session.getThinkingEnabled());
 
         try {
@@ -281,84 +240,28 @@ public class ChatController {
                     Map.of("sessionId", finalSid, "thinkingEnabled", thinking)));
         } catch (Exception ignored) {}
 
-        // 构建消息列表（异步，不阻塞 SSE 返回）
         final Long fUserId = userId;
-        final Long fFinalSid = finalSid;
         CompletableFuture.runAsync(() -> {
             try {
-                List<Map<String, String>> messages = new ArrayList<>();
+                List<Map<String, String>> messages = chatService.buildStreamMessages(fUserId, finalSid, message, userMsg.getId());
 
-                // 1. System prompt（F1）
-                String systemPrompt = chatService.resolveSystemPrompt(fUserId, fFinalSid);
-
-                // 2. RAG 检索（F2 + F4）
-                List<SessionKbBinding> bindings = sessionKbBindingRepository.findBySessionId(fFinalSid);
-                if (!bindings.isEmpty()) {
-                    try {
-                        float[] queryVector = llmService.getEmbedding(message, fUserId);
-                        String vectorStr = llmService.vectorToString(queryVector);
-                        String kbIdsArray = "{" + bindings.stream()
-                                .map(b -> b.getKbId().toString())
-                                .collect(Collectors.joining(",")) + "}";
-                        List<Object[]> rawResults = documentChunkRepository.findSimilarChunksInKbs(kbIdsArray, vectorStr, 5);
-                        if (!rawResults.isEmpty()) {
-                            StringBuilder ctx = new StringBuilder("\n\n## 参考资料\n");
-                            List<Long> kbIds = bindings.stream().map(SessionKbBinding::getKbId).toList();
-                            List<KnowledgeBase> kbs = knowledgeBaseRepository.findAllById(kbIds);
-                            for (int i = 0; i < Math.min(rawResults.size(), 5); i++) {
-                                Object[] row = rawResults.get(i);
-                                String content = row[0] instanceof DocumentChunk c ? c.getContent() : String.valueOf(row[0]);
-                                Long kbId = row.length > 2 && row[2] instanceof Number n ? n.longValue() : null;
-                                String kbName = kbId != null
-                                        ? kbs.stream().filter(k -> k.getId().equals(kbId))
-                                                .findFirst().map(KnowledgeBase::getName).orElse("未知")
-                                        : "未知";
-                                ctx.append("\n> [").append(kbName).append("] ")
-                                        .append(content.length() > 300 ? content.substring(0, 300) + "…" : content);
-                            }
-                            systemPrompt += ctx.toString();
-                        }
-                    } catch (Exception ignored) {}
-                }
-
-                messages.add(Map.of("role", "system", "content", systemPrompt));
-
-                // 3. 注入对话历史（最近10条，排除当前用户消息）
-                List<ChatMessage> histList = chatMessageRepository.findTop10BySessionIdOrderByCreatedAtDesc(finalSid);
-                java.util.Collections.reverse(histList);
-                for (ChatMessage hm : histList) {
-                    if (!hm.getId().equals(userMsg.getId())) {
-                        messages.add(Map.of("role", hm.getRole(), "content", hm.getContent()));
-                    }
-                }
-
-                messages.add(Map.of("role", "user", "content", message));
-
-                // 4. 发起 streaming
                 Flux<String> flux = llmService.chatStream(messages, fUserId, thinking);
                 StringBuilder fullResponse = new StringBuilder();
 
                 flux.doOnNext(token -> fullResponse.append(token))
                     .doOnComplete(() -> {
-                        // 保存 AI 回复
                         ChatMessage aiMsg = new ChatMessage();
-                        aiMsg.setSessionId(fFinalSid);
+                        aiMsg.setSessionId(finalSid);
                         aiMsg.setRole("assistant");
                         aiMsg.setContent(fullResponse.toString());
-                        chatMessageRepository.save(aiMsg);
+                        chatService.saveMessage(aiMsg);
 
-                        // 首次对话生成标题
-                        ChatSession s = chatSessionRepository.findById(fFinalSid).orElse(null);
+                        ChatSession s = chatService.getSession(finalSid);
                         if (s != null && "新对话".equals(s.getTitle())) {
-                            try {
-                                String userText = message != null ? message : "";
-                                String aiText = fullResponse.toString();
-                                String title = generateStreamTitle(fUserId, userText, aiText);
-                                if (title != null && !title.isBlank()) {
-                                    s.setTitle(title);
-                                    chatSessionRepository.save(s);
-                                }
-                            } catch (Exception ignored) {}
+                            String title = chatService.generateStreamTitle(fUserId, message, fullResponse.toString());
+                            if (title != null && !title.isBlank()) {
+                                chatService.updateSessionTitle(finalSid, title);
+                            }
                         }
                     })
                     .doOnError(err -> {
@@ -366,16 +269,9 @@ public class ChatController {
                         emitter.completeWithError(err);
                     })
                     .subscribe(
-                        token -> {
-                            try { emitter.send(SseEmitter.event().name("token").data(token)); } catch (Exception e) {}
-                        },
+                        token -> { try { emitter.send(SseEmitter.event().name("token").data(token)); } catch (Exception e) {} },
                         error -> {},
-                        () -> {
-                            try {
-                                emitter.send(SseEmitter.event().name("done").data(Map.of()));
-                                emitter.complete();
-                            } catch (Exception e) {}
-                        }
+                        () -> { try { emitter.send(SseEmitter.event().name("done").data(Map.of())); emitter.complete(); } catch (Exception e) {} }
                     );
             } catch (Exception e) {
                 try { emitter.send(SseEmitter.event().name("error").data(e.getMessage())); emitter.completeWithError(e); } catch (Exception ex) {}
@@ -385,24 +281,12 @@ public class ChatController {
         return emitter;
     }
 
-    private String generateStreamTitle(Long userId, String userMessage, String aiResponse) {
-        try {
-            String aiPart = aiResponse == null ? "" : aiResponse;
-            if (aiPart.length() > 200) aiPart = aiPart.substring(0, 200);
-            List<Map<String, String>> titlePrompt = new ArrayList<>();
-            titlePrompt.add(Map.of(
-                    "role", "system",
-                    "content", "你是一个标题生成器。根据用户的问题和 AI 回答，生成一个不超过 10 个汉字的简短主题标题。只返回标题本身，不要加引号、标点、前后缀、说明。"));
-            titlePrompt.add(Map.of(
-                    "role", "user",
-                    "content", "用户问题：" + (userMessage != null ? userMessage : "") + "\n\nAI回答：" + aiPart));
-            String title = llmService.chat(titlePrompt, userId);
-            if (title == null) return null;
-            return title.trim().replaceAll("[\"'「」『』《》\\[\\]（）()【】]", "")
-                    .split("\\n")[0].trim();
-        } catch (Exception e) {
-            return null;
-        }
+    private void subscribeFlux(Flux<String> flux, SseEmitter emitter) {
+        flux.subscribe(
+            token -> { try { emitter.send(SseEmitter.event().name("token").data(token)); } catch (Exception ex) {} },
+            error -> { try { emitter.send(SseEmitter.event().name("error").data(error.getMessage())); emitter.completeWithError(error); } catch (Exception ex) {} },
+            () -> { try { emitter.send(SseEmitter.event().name("done").data(Map.of())); emitter.complete(); } catch (Exception ex) {} }
+        );
     }
 
     private Long extractTokenUserId(Map<String, Object> body) {

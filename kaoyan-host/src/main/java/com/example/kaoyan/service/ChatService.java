@@ -90,6 +90,14 @@ public class ChatService {
     }
 
     @Transactional
+    public void updateSessionTitle(Long sessionId, String title) {
+        chatSessionRepository.findById(sessionId).ifPresent(s -> {
+            s.setTitle(title);
+            chatSessionRepository.save(s);
+        });
+    }
+
+    @Transactional
     public ChatMessage saveMessage(ChatMessage msg) {
         return chatMessageRepository.save(msg);
     }
@@ -516,6 +524,81 @@ public class ChatService {
             return compressed;
         } catch (Exception e) {
             return history.subList(history.size() - 4, history.size());
+        }
+    }
+
+    // ================================================================
+    // 流式端点：构建完整的消息列表（含 System Prompt + RAG + 历史）
+    // 提供给 ChatController 直接用于 chatStream
+    // ================================================================
+
+    public List<Map<String, String>> buildStreamMessages(Long userId, Long sessionId, String userMessage, Long userMsgId) {
+        List<Map<String, String>> messages = new ArrayList<>();
+
+        // 1. 解析系统 Prompt（F1：会话级覆盖）
+        String systemPrompt = resolveSystemPrompt(userId, sessionId);
+
+        // 2. RAG 检索（F2 + F4）
+        List<SessionKbBinding> bindings = sessionKbBindingRepository.findBySessionId(sessionId);
+        if (!bindings.isEmpty()) {
+            try {
+                float[] queryVector = llmService.getEmbedding(userMessage, userId);
+                String vectorStr = llmService.vectorToString(queryVector);
+                String kbIdsArray = "{" + bindings.stream()
+                        .map(b -> b.getKbId().toString())
+                        .collect(Collectors.joining(",")) + "}";
+                List<Object[]> rawResults = documentChunkRepository.findSimilarChunksInKbs(kbIdsArray, vectorStr, 5);
+                if (!rawResults.isEmpty()) {
+                    StringBuilder ctx = new StringBuilder("\n\n## 参考资料\n");
+                    List<Long> kbIds = bindings.stream().map(SessionKbBinding::getKbId).toList();
+                    List<KnowledgeBase> kbs = knowledgeBaseRepository.findAllById(kbIds);
+                    for (int i = 0; i < Math.min(rawResults.size(), 5); i++) {
+                        Object[] row = rawResults.get(i);
+                        String content = row[0] instanceof DocumentChunk c ? c.getContent() : String.valueOf(row[0]);
+                        Long kbId = row.length > 2 && row[2] instanceof Number n ? n.longValue() : null;
+                        String kbName = kbId != null
+                                ? kbs.stream().filter(k -> k.getId().equals(kbId))
+                                        .findFirst().map(KnowledgeBase::getName).orElse("未知")
+                                : "未知";
+                        ctx.append("\n> [").append(kbName).append("] ")
+                                .append(content.length() > 300 ? content.substring(0, 300) + "…" : content);
+                    }
+                    systemPrompt += ctx.toString();
+                }
+            } catch (Exception ignored) {}
+        }
+
+        messages.add(Map.of("role", "system", "content", systemPrompt));
+
+        // 3. 注入对话历史（最近10条）
+        List<ChatMessage> histList = chatMessageRepository.findTop10BySessionIdOrderByCreatedAtDesc(sessionId);
+        Collections.reverse(histList);
+        for (ChatMessage hm : histList) {
+            if (hm.getId().equals(userMsgId)) continue;
+            messages.add(Map.of("role", hm.getRole(), "content", hm.getContent()));
+        }
+
+        messages.add(Map.of("role", "user", "content", userMessage));
+        return messages;
+    }
+
+    public String generateStreamTitle(Long userId, String userMessage, String aiResponse) {
+        try {
+            String aiPart = aiResponse == null ? "" : aiResponse;
+            if (aiPart.length() > 200) aiPart = aiPart.substring(0, 200);
+            List<Map<String, String>> titlePrompt = new ArrayList<>();
+            titlePrompt.add(Map.of(
+                    "role", "system",
+                    "content", "你是一个标题生成器。根据用户的问题和 AI 回答，生成一个不超过 10 个汉字的简短主题标题。只返回标题本身，不要加引号、标点、前后缀、说明。"));
+            titlePrompt.add(Map.of(
+                    "role", "user",
+                    "content", "用户问题：" + (userMessage != null ? userMessage : "") + "\n\nAI回答：" + aiPart));
+            String title = llmService.chat(titlePrompt, userId);
+            if (title == null) return null;
+            return title.trim().replaceAll("[\"'「」『』《》\\[\\]（）()【】]", "")
+                    .split("\\n")[0].trim();
+        } catch (Exception e) {
+            return null;
         }
     }
 }
