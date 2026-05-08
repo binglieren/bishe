@@ -67,177 +67,13 @@ export default function ChatScreen({ route, navigation }) {
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [expandedReasoning, setExpandedReasoning] = useState({});
+  const streamingRef = useRef(false);
 
-  // 长按弹出小图标栏
-  const [popoverVisible, setPopoverVisible] = useState(false);
-  const [popoverMsg, setPopoverMsg] = useState(null); // { content, role, index }
-  const [snackVisible, setSnackVisible] = useState(false);
-  const [snackMsg, setSnackMsg] = useState('');
-  const [selectedImage, setSelectedImage] = useState(null);
-
-  // ── 语音输入状态 ──────────────────────────────
-  const [recording, setRecording] = useState(null);          // Audio.Recording instance
-  const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const [recordSec, setRecordSec] = useState(0);             // 当前录音秒数（仅 UI 显示）
-  const [willCancel, setWillCancel] = useState(false);       // 上滑预取消状态
-  const recordTimerRef = useRef(null);
-  const recordingRef = useRef(null);                         // ref 版本，给异步流程和卸载使用
-  const recordStartTsRef = useRef(0);                        // 录音真实开始时间戳（避免闭包陷阱）
-  const willCancelRef = useRef(false);
-  const stoppingRef = useRef(false);                         // 正在停止中，防双击重复 unload
-  const stopPendingRef = useRef(false);                      // 录音未开始就收到停止指令
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  // 消息列表 ref
-  const listRef = useRef(null);
-  // 是否已完成首次"贴底"定位（历史消息加载后）
-  const initialScrolledRef = useRef(false);
-  // 上一次的消息条数；条数增加 = 新消息到来 → 滚到底
-  // 这里只跟 messages.length 联动，不再监听 onContentSizeChange，
-  // 避免被 MathText 内 WebView 异步测高反复唤醒造成"上下跳"循环
-  const lastMsgCountRef = useRef(0);
-  // 首次加载 3s 内 onContentSizeChange 触发追底；null = 已关闭
-  const scrollSettleRef = useRef(null);
-
-  // ── TTS 朗读状态 ───────────────────────────────
-  // 同一时刻只允许一段语音播放；ttsLoadingIndex 表示正在请求音频的消息下标，
-  // ttsPlayingIndex 表示正在播放的消息下标。
-  const [ttsLoadingIndex, setTtsLoadingIndex] = useState(null);
-  const [ttsPlayingIndex, setTtsPlayingIndex] = useState(null);
-  const ttsSoundRef = useRef(null);
-
-  // 卸载时停止 TTS 播放，防止泄漏
-  useEffect(() => {
-    return () => {
-      if (ttsSoundRef.current) {
-        ttsSoundRef.current.unloadAsync().catch(() => {});
-        ttsSoundRef.current = null;
-      }
-    };
-  }, []);
-
-  // ── 弹出小图标操作栏（由 ⋮ 按钮触发） ──
-  const showPopover = (item, index) => {
-    if (!item.content) return;
-    setPopoverMsg({ content: item.content, role: item.role, index });
-    setPopoverVisible(true);
-  };
-
-  const dismissPopover = () => {
-    setPopoverVisible(false);
-    setPopoverMsg(null);
-  };
-
-  const handlePopoverFavorite = () => {
-    dismissPopover();
-    setSnackMsg('收藏功能即将上线');
-    setSnackVisible(true);
-  };
-
-  const handlePopoverShare = () => {
-    dismissPopover();
-    setSnackMsg('分享功能即将上线');
-    setSnackVisible(true);
-  };
-
-  /**
-   * 朗读 / 停止朗读某条 AI 回复。
-   * 同条消息再点一次 = 停止；点别的消息 = 切换。
-   */
-  const handleToggleTts = async (text, index) => {
-    // 同条正在播 → 停止
-    if (ttsPlayingIndex === index && ttsSoundRef.current) {
-      try { await ttsSoundRef.current.stopAsync(); } catch {}
-      try { await ttsSoundRef.current.unloadAsync(); } catch {}
-      ttsSoundRef.current = null;
-      setTtsPlayingIndex(null);
-      return;
-    }
-    // 别条还在播 → 先卸掉
-    if (ttsSoundRef.current) {
-      try { await ttsSoundRef.current.unloadAsync(); } catch {}
-      ttsSoundRef.current = null;
-      setTtsPlayingIndex(null);
-    }
-
-    if (!text || !text.trim()) return;
-    try {
-      setTtsLoadingIndex(index);
-      const res = await synthesizeSpeech(text);
-      const audioBase64 = res?.data?.audio;
-      const mimeType = res?.data?.mimeType || 'audio/wav';
-      if (!audioBase64) throw new Error('未获取到音频');
-
-      const uri = `data:${mimeType};base64,${audioBase64}`;
-      const { sound } = await Audio.Sound.createAsync(
-        { uri },
-        { shouldPlay: true }
-      );
-      ttsSoundRef.current = sound;
-      setTtsPlayingIndex(index);
-
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status?.didJustFinish) {
-          sound.unloadAsync().catch(() => {});
-          if (ttsSoundRef.current === sound) ttsSoundRef.current = null;
-          setTtsPlayingIndex((cur) => (cur === index ? null : cur));
-        }
-      });
-    } catch (err) {
-      // 后端 GlobalExceptionHandler 把 RuntimeException 的 message 放在 response.data.message
-      const backendMsg = err?.response?.data?.message;
-      const detail = backendMsg || err?.message || '朗读失败';
-      setSnackMsg('朗读失败：' + detail);
-      setSnackVisible(true);
-      setTtsPlayingIndex(null);
-    } finally {
-      setTtsLoadingIndex(null);
-    }
-  };
-
-  // 把 header title 改成当前会话名
-  useEffect(() => {
-    navigation.setOptions({ title: initialTitle });
-  }, [initialTitle]);
-
-  // 加载历史消息
-  const loadMessages = async (sid) => {
-    // 切换会话时重置滚动标记，让新会话能再次执行首次贴底
-    initialScrolledRef.current = false;
-    lastMsgCountRef.current = 0;
-    if (!sid) {
-      setMessages([]);
-      return;
-    }
-    setLoadingHistory(true);
-    try {
-      const res = await getMessages(sid);
-      const list = res.data || [];
-      setMessages(list);
-      // 后台预热公式渲染缓存（无 contentHtml 的消息异步渲染 + 补传后端）
-      warmupCache(list, (msg, segments) => {
-        const meta = JSON.stringify(segments);
-        // 将 segments 存入本地缓存
-        setCached(msg.content, segments, 15).catch(() => {});
-        // 补传后端
-        if (msg.id) {
-          patchMessageRender(msg.id, {
-            contentHtml: meta,
-            renderMeta: meta,
-          }).catch(() => {});
-        }
-      }, 15, 4);
-    } catch (err) {
-      setSnackMsg('加载消息失败');
-      setSnackVisible(true);
-    } finally {
-      setLoadingHistory(false);
-    }
-  };
+  // ...existing code...
 
   useEffect(() => {
+    if (sessionId == null) return;
+    if (streamingRef.current) return; // 流式进行中，不覆盖
     loadMessages(sessionId);
   }, [sessionId]);
 
@@ -592,6 +428,7 @@ export default function ChatScreen({ route, navigation }) {
         }
       } else {
         // 文本消息：流式 SSE
+        streamingRef.current = true;
         const msgIdx = messages.length + 1;
         setMessages((prev) => [...prev, { role: 'assistant', content: '', reasoningContent: '', id: null, _streaming: true }]);
 
@@ -662,6 +499,7 @@ export default function ChatScreen({ route, navigation }) {
       setSnackVisible(true);
     } finally {
       setLoading(false);
+      streamingRef.current = false;
     }
   };
 
