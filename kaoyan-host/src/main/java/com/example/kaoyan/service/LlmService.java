@@ -390,7 +390,9 @@ public class LlmService {
             throw wcre;
         } catch (Exception ex) {
             // #region agent log
-            AgentDebugLog.ndjson("H4err", "LlmService.chat", ex.getClass().getSimpleName(), "{}");
+            AgentDebugLog.ndjson("H4err", "LlmService.chat", ex.getClass().getSimpleName(),
+                    "{\"msg\":\"" + (ex.getMessage() != null ? ex.getMessage().replace("\"", "'").replace("\n", " ") : "") + "\"}");
+            ex.printStackTrace();
             // #endregion
             throw ex;
         }
