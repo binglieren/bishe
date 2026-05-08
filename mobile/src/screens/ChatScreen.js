@@ -759,30 +759,35 @@ export default function ChatScreen({ route, navigation }) {
     >
       {/* 顶部：知识库接入状态 */}
       <View style={styles.kbBar}>
-        <TouchableOpacity
-          style={[styles.kbChip, selectedKb && styles.kbChipActive]}
-          activeOpacity={0.75}
-          onPress={() => setKbDialogVisible(true)}
-        >
-          <RNText style={styles.kbChipIcon}>📚</RNText>
-          <Text
-            style={[styles.kbChipText, selectedKb && styles.kbChipTextActive]}
-            numberOfLines={1}
+        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+          <TouchableOpacity
+            style={[styles.kbChip, selectedKb && styles.kbChipActive]}
+            activeOpacity={0.75}
+            onPress={() => setKbDialogVisible(true)}
           >
-            {selectedKb ? `已接入：${selectedKb.name}` : '未接入知识库'}
-          </Text>
-          <RNText style={styles.kbChipChevron}>⌄</RNText>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.thinkingChip, thinkingEnabled && styles.thinkingChipActive]}
-          activeOpacity={0.75}
-          onPress={handleToggleThinking}
-        >
-          <RNText style={styles.thinkingChipIcon}>{thinkingEnabled ? '🧠' : '💡'}</RNText>
-          <Text style={[styles.thinkingChipText, thinkingEnabled && styles.thinkingChipTextActive]}>
-            {thinkingEnabled ? '深度思考' : '普通模式'}
-          </Text>
-        </TouchableOpacity>
+            <RNText style={styles.kbChipIcon}>📚</RNText>
+            <Text
+              style={[styles.kbChipText, selectedKb && styles.kbChipTextActive]}
+              numberOfLines={1}
+            >
+              {selectedKb ? `已接入：${selectedKb.name}` : '未接入知识库'}
+            </Text>
+            <RNText style={styles.kbChipChevron}>⌄</RNText>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.kbChip, thinkingEnabled && styles.kbChipActive]}
+            activeOpacity={0.75}
+            onPress={handleToggleThinking}
+          >
+            <RNText style={styles.kbChipIcon}>{thinkingEnabled ? '🧠' : '💡'}</RNText>
+            <Text
+              style={[styles.kbChipText, thinkingEnabled && styles.kbChipTextActive]}
+              numberOfLines={1}
+            >
+              {thinkingEnabled ? '深度思考' : '普通模式'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {loadingHistory ? (
@@ -1373,29 +1378,5 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 14,
     letterSpacing: 1,
-  },
-
-  thinkingChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: '#F5F5F5',
-    gap: 4,
-  },
-  thinkingChipActive: {
-    backgroundColor: '#E8F0FE',
-  },
-  thinkingChipIcon: {
-    fontSize: 14,
-  },
-  thinkingChipText: {
-    fontSize: 12,
-    color: colors.textSecondary,
-  },
-  thinkingChipTextActive: {
-    color: colors.primary,
-    fontWeight: '600',
   },
 });
