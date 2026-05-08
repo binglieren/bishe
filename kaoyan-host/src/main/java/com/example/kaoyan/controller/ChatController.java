@@ -241,11 +241,12 @@ public class ChatController {
                     Map.of("sessionId", finalSid, "thinkingEnabled", thinking)));
         } catch (Exception ignored) {}
 
+        // 在主线程中同步构建消息列表（JPA session 在异步线程中不可用）
+        final List<Map<String, String>> messages = chatService.buildStreamMessages(userId, finalSid, message, userMsg.getId());
+
         final Long fUserId = userId;
         CompletableFuture.runAsync(() -> {
             try {
-                List<Map<String, String>> messages = chatService.buildStreamMessages(fUserId, finalSid, message, userMsg.getId());
-
                 Flux<StreamChatEvent> flux = llmService.chatStream(messages, fUserId, thinking);
                 StringBuilder reasoningBuf = new StringBuilder();
                 StringBuilder contentBuf = new StringBuilder();
