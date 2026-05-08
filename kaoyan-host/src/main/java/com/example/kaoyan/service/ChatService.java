@@ -299,7 +299,7 @@ public class ChatService {
 
         // === 4. 计算 token 预算（F6） ===
         int estimatedTokens = estimateTokens(systemPrompt, history, userMessage);
-        boolean needsCompression = estimatedTokens > 7000; // 约 maxTokens 的 70%
+        boolean needsCompression = estimatedTokens > 12000;
         if (needsCompression) {
             history = compressHistory(history, userId);
         }

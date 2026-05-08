@@ -202,7 +202,7 @@ public class LlmService {
         }
         Integer sys = systemApiConfigService.getMaxTokens(SystemApiConfigService.STAGE_CHAT);
         if (sys != null) return sys;
-        return 4096;
+        return null; // 不传 max_tokens，由模型自行决定输出长度
     }
 
     public String resolveSystemPrompt(Long userId) {
@@ -307,12 +307,11 @@ public class LlmService {
 
         WebClient client = webClientBuilder.codecs(c -> c.defaultCodecs().maxInMemorySize(25 * 1024 * 1024)).baseUrl(url).build();
 
-        Map<String, Object> requestBody = Map.of(
-                "model", model,
-                "messages", messages,
-                "temperature", temperature,
-                "max_tokens", maxTokens
-        );
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("model", model);
+        requestBody.put("messages", messages);
+        requestBody.put("temperature", temperature);
+        if (maxTokens != null) requestBody.put("max_tokens", maxTokens);
 
         Map response;
         try {
@@ -359,7 +358,7 @@ public class LlmService {
         requestBody.put("model", model);
         requestBody.put("messages", messages);
         requestBody.put("temperature", temperature);
-        requestBody.put("max_tokens", maxTokens);
+        if (maxTokens != null) requestBody.put("max_tokens", maxTokens);
         if (thinkingEnabled) {
             requestBody.put("thinking", Map.of("type", "enabled"));
         }
@@ -417,7 +416,7 @@ public class LlmService {
         requestBody.put("model", model);
         requestBody.put("messages", messages);
         requestBody.put("temperature", temperature);
-        requestBody.put("max_tokens", maxTokens);
+        if (maxTokens != null) requestBody.put("max_tokens", maxTokens);
         requestBody.put("stream", true);
         if (thinkingEnabled) {
             requestBody.put("thinking", Map.of("type", "enabled"));
