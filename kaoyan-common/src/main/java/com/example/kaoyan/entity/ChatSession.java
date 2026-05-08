@@ -33,6 +33,14 @@ public class ChatSession {
     @Column(name = "thinking_enabled")
     private Boolean thinkingEnabled;
 
+    /** 会话级自定义系统 Prompt（为 null 时回退到 AiConfig / SystemApiConfig / 默认值） */
+    @Column(name = "system_prompt", columnDefinition = "TEXT")
+    private String systemPrompt;
+
+    /** 会话上下文（AI 提取的关键信息 JSON：subject, topic, level, focusPoints） */
+    @Column(name = "session_context", columnDefinition = "TEXT")
+    private String sessionContext;
+
     @CreationTimestamp
     @Column(name = "created_at")
     private LocalDateTime createdAt;

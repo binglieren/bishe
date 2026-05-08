@@ -3,6 +3,7 @@ package com.example.kaoyan.dto;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 对话会话列表项 DTO
@@ -11,12 +12,14 @@ import java.time.LocalDateTime;
 @Data
 public class ChatSessionDTO {
     private Long id;
-    private String title;              // LLM 生成的简称
-    private String lastMessagePreview; // 最后一条消息预览（截断）
-    private String lastMessageRole;    // user / assistant
+    private String title;
+    private String lastMessagePreview;
+    private String lastMessageRole;
     private Integer messageCount;
-    private Long knowledgeBaseId;      // 绑定的知识库 id（null=未绑定）
-    private Boolean thinkingEnabled;    // 深度思考模式开关
+    private Long knowledgeBaseId;          // 兼容旧单知识库字段
+    private List<Long> knowledgeBaseIds;   // 多知识库绑定列表（新）
+    private Boolean thinkingEnabled;
+    private String systemPrompt;           // 会话级自定义 Prompt
     private LocalDateTime updatedAt;
     private LocalDateTime createdAt;
 }
