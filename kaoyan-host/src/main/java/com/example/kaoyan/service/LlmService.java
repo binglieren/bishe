@@ -440,8 +440,12 @@ public class LlmService {
                                 })
                                 .filter(line -> !line.isBlank() && line.startsWith("data: ") && !line.equals("data: [DONE]"))
                                 .map(line -> line.substring(6))
-                                .map(this::extractStreamEvent)
-                                .filter(event -> event != null && event.getText() != null && !event.getText().isEmpty());
+                                .handle((String json, reactor.core.publisher.SynchronousSink<StreamChatEvent> sink) -> {
+                                    StreamChatEvent event = extractStreamEvent(json);
+                                    if (event != null && event.getText() != null && !event.getText().isEmpty()) {
+                                        sink.next(event);
+                                    }
+                                });
                     }
                     return response.createException().flatMapMany(Flux::error);
                 })

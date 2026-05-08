@@ -196,11 +196,10 @@ public class ChatController {
 
     @PostMapping(value = "/send/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "真流式 SSE，支持 RAG + 历史 + thinking")
-    @Transactional
     public SseEmitter sendStream(@RequestBody Map<String, Object> body) {
         Long userId = extractTokenUserId(body);
         if (userId == null) throw new RuntimeException("token required");
-        SseEmitter emitter = new SseEmitter(300_000L);
+        SseEmitter emitter = new SseEmitter(600_000L);
 
         final String message = (String) body.get("message");
         final Object sidObj = body.get("sessionId");
@@ -216,7 +215,10 @@ public class ChatController {
                     String content = reply.getContent();
                     if (content != null) for (char c : content.toCharArray()) sink.next(String.valueOf(c));
                     sink.complete();
-                } catch (Exception e) { sink.error(e); }
+                } catch (Exception e) {
+                    System.err.println("[SSE image] " + e.getMessage());
+                    sink.error(e);
+                }
             });
             subscribeFlux(flux, emitter);
             return emitter;
@@ -225,28 +227,42 @@ public class ChatController {
         Long sid = reqSessionId != null ? reqSessionId : chatService.createSession(userId, null).getId();
         final Long finalSid = sid;
 
-        // 保存用户消息
         ChatMessage userMsg = new ChatMessage();
         userMsg.setSessionId(finalSid);
         userMsg.setRole("user");
         userMsg.setContent(message);
         chatService.saveMessage(userMsg);
 
-        // thinking 状态
         ChatSession session = chatService.getSession(finalSid);
         boolean thinking = session != null && Boolean.TRUE.equals(session.getThinkingEnabled());
+        System.out.println("[SSE] sid=" + finalSid + " thinking=" + thinking + " msg=" + (message != null ? message.substring(0, Math.min(30, message.length())) : "null"));
 
         try {
             emitter.send(SseEmitter.event().name("session").data(
                     Map.of("sessionId", finalSid, "thinkingEnabled", thinking)));
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            System.err.println("[SSE] session event failed: " + e.getMessage());
+            emitter.completeWithError(e);
+            return emitter;
+        }
 
-        // 在主线程中同步构建消息列表（JPA session 在异步线程中不可用）
-        final List<Map<String, String>> messages = chatService.buildStreamMessages(userId, finalSid, message, userMsg.getId());
+        System.out.println("[SSE] building messages...");
+        final List<Map<String, String>> messages;
+        try {
+            messages = chatService.buildStreamMessages(userId, finalSid, message, userMsg.getId());
+            System.out.println("[SSE] messages built, count=" + messages.size());
+        } catch (Exception e) {
+            System.err.println("[SSE] buildStreamMessages failed: " + e.getMessage());
+            e.printStackTrace();
+            try { emitter.send(SseEmitter.event().name("error").data(e.getMessage())); } catch (Exception ex) {}
+            emitter.completeWithError(e);
+            return emitter;
+        }
 
         final Long fUserId = userId;
         CompletableFuture.runAsync(() -> {
             try {
+                System.out.println("[SSE] starting chatStream...");
                 Flux<StreamChatEvent> flux = llmService.chatStream(messages, fUserId, thinking);
                 StringBuilder reasoningBuf = new StringBuilder();
                 StringBuilder contentBuf = new StringBuilder();
@@ -259,6 +275,7 @@ public class ChatController {
                     }
                 })
                 .doOnComplete(() -> {
+                    System.out.println("[SSE] stream complete, content=" + contentBuf.length() + " reasoning=" + reasoningBuf.length());
                     ChatMessage aiMsg = new ChatMessage();
                     aiMsg.setSessionId(finalSid);
                     aiMsg.setRole("assistant");
@@ -277,6 +294,8 @@ public class ChatController {
                     }
                 })
                 .doOnError(err -> {
+                    System.err.println("[SSE] stream error: " + err.getMessage());
+                    err.printStackTrace();
                     try { emitter.send(SseEmitter.event().name("error").data(err.getMessage())); } catch (Exception ex) {}
                     emitter.completeWithError(err);
                 })
@@ -288,12 +307,25 @@ public class ChatController {
                             } else {
                                 emitter.send(SseEmitter.event().name("token").data(event.getText()));
                             }
-                        } catch (Exception e) {}
+                        } catch (Exception e) {
+                            // client disconnected
+                        }
                     },
-                    error -> {},
-                    () -> { try { emitter.send(SseEmitter.event().name("done").data(Map.of())); emitter.complete(); } catch (Exception e) {} }
+                    error -> {
+                        System.err.println("[SSE] subscribe error: " + error.getMessage());
+                    },
+                    () -> {
+                        try {
+                            emitter.send(SseEmitter.event().name("done").data(Map.of()));
+                            emitter.complete();
+                        } catch (Exception e) {
+                            System.err.println("[SSE] done event failed: " + e.getMessage());
+                        }
+                    }
                 );
             } catch (Exception e) {
+                System.err.println("[SSE] async error: " + e.getMessage());
+                e.printStackTrace();
                 try { emitter.send(SseEmitter.event().name("error").data(e.getMessage())); emitter.completeWithError(e); } catch (Exception ex) {}
             }
         });
