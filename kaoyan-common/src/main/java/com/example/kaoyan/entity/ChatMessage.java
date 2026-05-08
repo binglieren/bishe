@@ -1,5 +1,6 @@
 package com.example.kaoyan.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.CreationTimestamp;
@@ -29,6 +30,7 @@ public class ChatMessage {
     private String content;
 
     /** 图片 base64 编码（拍照搜题时存储） */
+    @JsonIgnore
     @Column(name = "image_base64", columnDefinition = "TEXT")
     private String imageBase64;
 
