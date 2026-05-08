@@ -287,10 +287,12 @@ public class ChatController {
 
                     ChatSession s = chatService.getSession(finalSid);
                     if (s != null && "新对话".equals(s.getTitle())) {
-                        String title = chatService.generateStreamTitle(fUserId, message, contentBuf.toString());
-                        if (title != null && !title.isBlank()) {
-                            chatService.updateSessionTitle(finalSid, title);
-                        }
+                        CompletableFuture.runAsync(() -> {
+                            String title = chatService.generateStreamTitle(fUserId, message, contentBuf.toString());
+                            if (title != null && !title.isBlank()) {
+                                chatService.updateSessionTitle(finalSid, title);
+                            }
+                        });
                     }
                 })
                 .doOnError(err -> {
