@@ -1,4 +1,5 @@
 import request from './request';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import EventSource from 'react-native-sse';
 
 export const createSession = (title) =>
@@ -66,8 +67,8 @@ export const patchMessageRender = (messageId, payload) =>
 export const sendMessageStream = (data, onToken, onError, onDone, onSession) => {
   return new Promise((resolve, reject) => {
     const baseUrl = request.defaults.baseURL.replace(/\/api$/, '');
-    import('@react-native-async-storage/async-storage')
-      .then(m => m.default.getItem('token')).catch(() => null)
+    AsyncStorage.getItem('token')
+      .catch(() => null)
       .then(tok => {
         const es = new EventSource(`${baseUrl}/api/chat/send/stream`, {
           method: 'POST',
