@@ -196,7 +196,8 @@ export default function ChatPage() {
                 <Card
                   size="small"
                   style={{
-                    maxWidth: '70%',
+                    maxWidth: msg.role === 'user' ? '70%' : '100%',
+                    width: msg.role === 'assistant' ? '100%' : undefined,
                     background: msg.role === 'user' ? '#1677ff' : '#f5f5f5',
                     color: msg.role === 'user' ? '#fff' : '#000',
                   }}
