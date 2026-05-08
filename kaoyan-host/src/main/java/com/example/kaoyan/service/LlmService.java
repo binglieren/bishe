@@ -196,14 +196,22 @@ public class LlmService {
         return 0.7;
     }
 
+    private static final int MIN_MAX_TOKENS = 16000;
+
     private Integer resolveMaxTokens(Long userId) {
         AiConfig config = getUserConfig(userId);
+        Integer userVal = null;
         if (config != null && config.getMaxTokens() != null) {
-            return config.getMaxTokens();
+            userVal = config.getMaxTokens();
         }
-        Integer sys = systemApiConfigService.getMaxTokens(SystemApiConfigService.STAGE_CHAT);
-        if (sys != null) return sys;
-        return null; // 不传 max_tokens，由模型自行决定输出长度
+        if (userVal == null) {
+            Integer sys = systemApiConfigService.getMaxTokens(SystemApiConfigService.STAGE_CHAT);
+            if (sys != null) userVal = sys;
+        }
+        if (userVal == null || userVal < MIN_MAX_TOKENS) {
+            return MIN_MAX_TOKENS;
+        }
+        return userVal;
     }
 
     public String resolveSystemPrompt(Long userId) {

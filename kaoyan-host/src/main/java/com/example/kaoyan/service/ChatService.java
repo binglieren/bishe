@@ -338,7 +338,7 @@ public class ChatService {
                 if (!msg.getId().equals(userMsg.getId())) {
                     Map<String, String> msgMap = new LinkedHashMap<>();
                     msgMap.put("role", msg.getRole());
-                    msgMap.put("content", msg.getContent());
+                    msgMap.put("content", msg.getContent() != null ? msg.getContent() : "");
                     if (msg.getReasoningContent() != null && !msg.getReasoningContent().isBlank()) {
                         msgMap.put("reasoning_content", msg.getReasoningContent());
                     }
@@ -587,9 +587,10 @@ public class ChatService {
         Collections.reverse(histList);
         for (ChatMessage hm : histList) {
             if (hm.getId().equals(userMsgId)) continue;
+            String content = hm.getContent() != null ? hm.getContent() : "";
             Map<String, String> msgMap = new LinkedHashMap<>();
             msgMap.put("role", hm.getRole());
-            msgMap.put("content", hm.getContent());
+            msgMap.put("content", content);
             if (hm.getReasoningContent() != null && !hm.getReasoningContent().isBlank()) {
                 msgMap.put("reasoning_content", hm.getReasoningContent());
             }
