@@ -447,7 +447,11 @@ public class LlmService {
                                     }
                                 });
                     }
-                    return response.createException().flatMapMany(Flux::error);
+                    return response.bodyToMono(String.class)
+                            .defaultIfEmpty("")
+                            .flatMapMany(body -> Flux.error(
+                                    new RuntimeException("DeepSeek API HTTP " + response.statusCode().value() + ": " + (body != null ? body.substring(0, Math.min(300, body.length())) : ""))
+                            ));
                 })
                 .doOnError(e -> {
                     System.err.println("chatStream Flux error: " + e.getMessage());
