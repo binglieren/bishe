@@ -66,6 +66,7 @@ export default function ChatScreen({ route, navigation }) {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const streamingRef = useRef(false);
   const [expandedReasoning, setExpandedReasoning] = useState({});
+  const [thinkingEnabled, setThinkingEnabled] = useState(route?.params?.thinkingEnabled ?? false);
 
   // 长按弹出小图标栏
   const [popoverVisible, setPopoverVisible] = useState(false);
@@ -291,6 +292,21 @@ export default function ChatScreen({ route, navigation }) {
         setSnackMsg(err.message || '切换知识库失败');
         setSnackVisible(true);
       }
+    }
+  };
+
+  const handleToggleThinking = async () => {
+    if (!sessionId) {
+      setSnackMsg('请先发送一条消息建立会话');
+      setSnackVisible(true);
+      return;
+    }
+    const newVal = !thinkingEnabled;
+    setThinkingEnabled(newVal);
+    try {
+      await toggleThinking(sessionId, newVal);
+    } catch (err) {
+      setThinkingEnabled(!newVal);
     }
   };
 
@@ -756,6 +772,16 @@ export default function ChatScreen({ route, navigation }) {
             {selectedKb ? `已接入：${selectedKb.name}` : '未接入知识库'}
           </Text>
           <RNText style={styles.kbChipChevron}>⌄</RNText>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.thinkingChip, thinkingEnabled && styles.thinkingChipActive]}
+          activeOpacity={0.75}
+          onPress={handleToggleThinking}
+        >
+          <RNText style={styles.thinkingChipIcon}>{thinkingEnabled ? '🧠' : '💡'}</RNText>
+          <Text style={[styles.thinkingChipText, thinkingEnabled && styles.thinkingChipTextActive]}>
+            {thinkingEnabled ? '深度思考' : '普通模式'}
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -1347,5 +1373,29 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 14,
     letterSpacing: 1,
+  },
+
+  thinkingChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#F5F5F5',
+    gap: 4,
+  },
+  thinkingChipActive: {
+    backgroundColor: '#E8F0FE',
+  },
+  thinkingChipIcon: {
+    fontSize: 14,
+  },
+  thinkingChipText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
+  thinkingChipTextActive: {
+    color: colors.primary,
+    fontWeight: '600',
   },
 });
