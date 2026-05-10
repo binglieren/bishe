@@ -76,8 +76,10 @@ public class AgentOrchestrator {
         if (context.getSystemPrompt() != null && !context.getSystemPrompt().isBlank()) {
             basePrompt = context.getSystemPrompt();
         } else {
-            basePrompt = buildSystemPrompt(agentType);
+            basePrompt = agentType.getSystemPrompt();
         }
+        // 始终附加工具定义，确保 LLM 知道可以调用 search_knowledge_base 等工具
+        basePrompt += "\n\n" + buildToolsSection(agentType);
 
         // F8: 注入知识库上下文
         if (context.getKnowledgeBaseIds() != null && !context.getKnowledgeBaseIds().isEmpty()) {
@@ -145,14 +147,18 @@ public class AgentOrchestrator {
         return result;
     }
 
-    /** 构建 Agent 的 system prompt（含工具定义） */
-    private String buildSystemPrompt(AgentType agentType) {
+    /** 构建工具定义部分 */
+    private String buildToolsSection(AgentType agentType) {
         String toolsJson = buildToolsForAgent(agentType);
-        return agentType.getSystemPrompt() + "\n\n" +
-            "你有以下工具可用。需要获取数据时，必须输出一个 JSON tool_call，格式为：\n" +
+        return "你有以下工具可用。需要获取数据时，必须输出一个 JSON tool_call，格式为：\n" +
             "{\"type\":\"tool_call\",\"name\":\"工具名\",\"arguments\":{...}}\n" +
             "不需要工具时直接回答。\n\n" +
             "可用工具定义：\n" + toolsJson;
+    }
+
+    /** 构建 Agent 的 system prompt（含工具定义） */
+    private String buildSystemPrompt(AgentType agentType) {
+        return agentType.getSystemPrompt() + "\n\n" + buildToolsSection(agentType);
     }
 
     /** 构建仅包含该 Agent 工具集的 JSON 数组 */

@@ -1,7 +1,8 @@
 server:
   port: 8088
   tomcat:
-    max-http-form-post-size: 50MB
+    max-http-form-post-size: 500MB
+    uri-encoding: UTF-8
 
 spring:
   datasource:
@@ -26,8 +27,14 @@ spring:
 
   servlet:
     multipart:
-      max-file-size: 50MB
-      max-request-size: 50MB
+      max-file-size: 500MB
+      max-request-size: 500MB
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+  mandatory-file-encoding: UTF-8
 
 # JWT 配置
 jwt:
@@ -53,7 +60,7 @@ llm:
 
   # ── ② multimodal：Qwen-VL (DashScope OpenAI 兼容) ──
   # 支持图片输入，用于拍照搜题、题目结构化
-  multimodal-model: qwen-vl-max
+  multimodal-model: qwen-vl-ocr
   multimodal-api-url: https://dashscope.aliyuncs.com/compatible-mode/v1
   multimodal-api-key: sk-0f77a6941aff43bab6b8d21db90134bf
 

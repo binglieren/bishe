@@ -158,6 +158,20 @@ export const buildGraphHtml = () => `
           postMsg({ type: 'nodeClick', id: params.data.id, name: params.data.name });
         }
       });
+
+      // 缩放时动态调整 label 字体大小
+      let currentZoom = 1;
+      let rafId = null;
+      chart.on('graphroam', function (params) {
+        if (params.zoom == null || params.zoom === currentZoom) return;
+        currentZoom = params.zoom;
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(function () {
+          const fs = Math.round(Math.max(6, Math.min(22, 11 * currentZoom)));
+          chart.setOption({ series: [{ label: { fontSize: fs } }] });
+        });
+      });
+
       window.addEventListener('resize', () => chart && chart.resize());
     }
 
@@ -234,20 +248,21 @@ export const buildGraphHtml = () => `
         roam: true,
         draggable: true,
         zoom: 1,
+        scaleLimit: { min: 0.3, max: 5 },
         symbolSize: 24,
         edgeSymbol: ['none', 'none'],
         force: {
-          repulsion: 180,
-          edgeLength: [80, 160],
-          gravity: 0.08,
-          friction: 0.6,
+          repulsion: 120,
+          edgeLength: [100, 220],
+          gravity: 0.12,
+          friction: 0.7,
         },
         emphasis: {
           focus: 'adjacency',
           scale: 1.1,
           label: { fontWeight: 'bold' }
         },
-        animationDurationUpdate: 600,
+        animationDurationUpdate: 200,
         data: echartsNodes,
         links: echartsEdges,
       }]

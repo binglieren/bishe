@@ -248,7 +248,9 @@ export default function QuestionScreen() {
           )}
         </View>
 
-        <Text style={styles.content} numberOfLines={2}>{q.content}</Text>
+        <View style={styles.contentPreview}>
+          <MathText value={q.content} style={styles.content} />
+        </View>
 
         <View style={styles.cardFooter}>
           {lastTime ? (
@@ -295,7 +297,9 @@ export default function QuestionScreen() {
         </View>
 
         <Text style={[styles.reasonText, { color: meta.color }]}>💡 {item.reason}</Text>
-        <Text style={styles.content} numberOfLines={2}>{q.content}</Text>
+        <View style={styles.contentPreview}>
+          <MathText value={q.content} style={styles.content} />
+        </View>
 
         <View style={styles.cardFooter}>
           <Text style={styles.meta}>AI 精准推荐</Text>
@@ -792,6 +796,10 @@ const styles = StyleSheet.create({
     ...typography.bodyMd,
     color: colors.textPrimary,
     lineHeight: 20,
+  },
+  contentPreview: {
+    maxHeight: 40,
+    overflow: 'hidden',
   },
   cardFooter: {
     flexDirection: 'row',

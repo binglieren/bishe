@@ -2,7 +2,10 @@ package com.example.kaoyan.repository;
 
 import com.example.kaoyan.entity.DocumentChunk;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -11,6 +14,17 @@ public interface DocumentChunkRepository extends JpaRepository<DocumentChunk, Lo
     List<DocumentChunk> findByDocumentId(Long documentId);
 
     void deleteByDocumentId(Long documentId);
+
+    /** 原生插入，显式 CAST embedding 字符串为 vector 类型 */
+    @Modifying
+    @Transactional
+    @Query(value = "INSERT INTO document_chunk (document_id, content, chunk_index, embedding, created_at) " +
+            "VALUES (:documentId, :content, :chunkIndex, CAST(:embedding AS vector(1536)), NOW())",
+            nativeQuery = true)
+    void insertChunk(@Param("documentId") Long documentId,
+                     @Param("content") String content,
+                     @Param("chunkIndex") Integer chunkIndex,
+                     @Param("embedding") String embedding);
 
     /**
      * 向量相似度检索（按知识库过滤）：

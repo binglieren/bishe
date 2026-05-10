@@ -211,6 +211,9 @@ export default function KnowledgeGraphScreen({ navigation }) {
           androidLayerType="hardware"
           cacheEnabled
           mixedContentMode="always"
+          scrollEnabled={false}
+          bounces={false}
+          overScrollMode="never"
         />
       </View>
 

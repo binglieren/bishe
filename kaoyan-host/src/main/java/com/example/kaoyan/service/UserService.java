@@ -87,10 +87,14 @@ public class UserService {
                 ? imageBase64
                 : "data:image/jpeg;base64," + imageBase64;
 
+        System.out.println("[avatar] userId=" + userId + " 接收数据长度: " + imageBase64.length() + " 最终长度: " + value.length());
+
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
         user.setAvatar(value);
         userRepository.save(user);
+
+        System.out.println("[avatar] 头像已保存到 DB, userId=" + userId + " 数据长度: " + value.length());
         return value;
     }
 

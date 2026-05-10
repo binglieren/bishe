@@ -187,7 +187,7 @@ public class QuestionService {
      * 获取用户积累的知识点列表
      */
     public List<KnowledgePoint> getUserKnowledgePoints(Long userId) {
-        return userQuestionRepository.findKnowledgePointsByUserId(userId);
+        return knowledgePointRepository.findKnowledgePointsByUserId(userId);
     }
 
     /**

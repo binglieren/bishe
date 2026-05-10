@@ -44,6 +44,10 @@ public class Document {
     @Column(length = 20)
     private String status = "PROCESSING";
 
+    /** 失败时的错误信息 */
+    @Column(name = "error_message", length = 2000)
+    private String errorMessage;
+
     @Column(name = "upload_time")
     private LocalDateTime uploadTime = LocalDateTime.now();
 }

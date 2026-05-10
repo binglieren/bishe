@@ -17,12 +17,15 @@ request.interceptors.request.use(async (config) => {
 request.interceptors.response.use(
   (response) => {
     const res = response.data;
+    console.log('[api] response:', response.config.url, 'code:', res.code);
     if (res.code !== 200) {
+      console.error('[api] 业务错误:', response.config.url, res);
       return Promise.reject(new Error(res.message || '请求失败'));
     }
     return res;
   },
   async (error) => {
+    console.error('[api] 网络错误:', error.config?.url, error.message, error.response?.status);
     if (error.response?.status === 403) {
       await AsyncStorage.removeItem('token');
     }

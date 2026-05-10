@@ -3,6 +3,7 @@ package com.example.kaoyan.question;
 import com.example.kaoyan.entity.KnowledgePoint;
 import com.example.kaoyan.entity.Question;
 import com.example.kaoyan.entity.UserQuestion;
+import com.example.kaoyan.repository.KnowledgePointRepository;
 import com.example.kaoyan.repository.QuestionRepository;
 import com.example.kaoyan.repository.UserQuestionRepository;
 import jakarta.persistence.EntityManager;
@@ -31,6 +32,7 @@ import java.util.stream.Collectors;
 public class QuestionMcpTools {
 
     private final QuestionRepository questionRepository;
+    private final KnowledgePointRepository knowledgePointRepository;
     private final UserQuestionRepository userQuestionRepository;
     private final WebClient.Builder webClientBuilder;
 
@@ -68,7 +70,7 @@ public class QuestionMcpTools {
         Long userId = ((Number) request.get("userId")).longValue();
         int count = request.get("count") != null ? ((Number) request.get("count")).intValue() : 10;
 
-        List<KnowledgePoint> kps = userQuestionRepository.findKnowledgePointsByUserId(userId);
+        List<KnowledgePoint> kps = knowledgePointRepository.findKnowledgePointsByUserId(userId);
         List<Question> result = new ArrayList<>();
 
         if (!kps.isEmpty()) {

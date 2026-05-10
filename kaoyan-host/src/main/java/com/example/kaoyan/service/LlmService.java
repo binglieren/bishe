@@ -314,7 +314,9 @@ public class LlmService {
         Double temperature = resolveTemperature(userId);
         Integer maxTokens = resolveMaxTokens(userId);
 
-        WebClient client = webClientBuilder.codecs(c -> c.defaultCodecs().maxInMemorySize(25 * 1024 * 1024)).baseUrl(url).build();
+        WebClient client = webClientBuilder
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(50 * 1024 * 1024))
+                .baseUrl(url).build();
 
         Map<String, Object> requestBody = new LinkedHashMap<>();
         requestBody.put("model", model);
@@ -331,7 +333,7 @@ public class LlmService {
                     .bodyValue(requestBody)
                     .retrieve()
                     .bodyToMono(Map.class)
-                    .block();
+                    .block(java.time.Duration.ofMinutes(5));
         } catch (WebClientResponseException wcre) {
             AgentDebugLog.ndjson("H4err", "LlmService.chatMultimodal", "WebClientResponseException",
                     "{\"status\":" + wcre.getStatusCode().value() + ",\"phase\":\"chat\"}");

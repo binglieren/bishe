@@ -20,6 +20,7 @@ import {
   RadioButton,
 } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { getUserInfo, checkIn, updateProfile, uploadAvatar } from '../api/auth';
 import { getSubjectAnalysis } from '../api/analysis';
 import dayjs from 'dayjs';
@@ -94,14 +95,37 @@ export default function DashboardScreen({ navigation }) {
   // Web / 部分 Android 设备 allowsEditing 裁剪后 asset.base64 会是 undefined，
   // 此时通过 fetch(uri) → blob → FileReader 兜底把图片转成 base64
   const uriToBase64 = async (uri) => {
+    console.log('[avatar] uriToBase64 start:', uri);
+    // 优先使用 expo-file-system（更可靠，支持 content:// 等 URI）
+    try {
+      const b64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      console.log('[avatar] FileSystem base64 length:', b64?.length);
+      if (b64 && b64.length > 10) return b64;
+    } catch (fsErr) {
+      console.warn('[avatar] FileSystem 读取失败，尝试 fetch 兜底:', fsErr.message);
+    }
+    // fallback: fetch + FileReader
     const res = await fetch(uri);
+    console.log('[avatar] fetch status:', res.status, 'ok:', res.ok);
     const blob = await res.blob();
+    console.log('[avatar] blob size:', blob.size, 'type:', blob.type);
+    if (!blob || blob.size === 0) {
+      throw new Error('图片数据为空');
+    }
     return await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
         const r = reader.result || '';
+        if (!r || (typeof r === 'string' && r.length < 10)) {
+          reject(new Error('图片编码结果异常'));
+          return;
+        }
         const idx = typeof r === 'string' ? r.indexOf(',') : -1;
-        resolve(idx >= 0 ? r.substring(idx + 1) : r);
+        const b64 = idx >= 0 ? r.substring(idx + 1) : r;
+        console.log('[avatar] fetch base64 length:', b64.length);
+        resolve(b64);
       };
       reader.onerror = () => reject(new Error('图片读取失败'));
       reader.readAsDataURL(blob);
@@ -110,8 +134,10 @@ export default function DashboardScreen({ navigation }) {
 
   const handlePickAvatar = async () => {
     if (uploadingAvatar) return;
+    console.log('[avatar] ====== 开始选择头像 ======');
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      console.log('[avatar] 权限结果:', perm.granted);
       if (!perm.granted) {
         setSnackMsg('需要相册权限才能更换头像');
         setSnackVisible(true);
@@ -124,9 +150,11 @@ export default function DashboardScreen({ navigation }) {
         quality: 0.6,
         base64: true,
       });
+      console.log('[avatar] picker result canceled:', result.canceled);
       if (result.canceled) return;
 
       const asset = result.assets?.[0];
+      console.log('[avatar] asset.uri:', asset?.uri, 'base64 available:', !!asset?.base64, 'mimeType:', asset?.mimeType, 'width:', asset?.width, 'height:', asset?.height);
       if (!asset || (!asset.base64 && !asset.uri)) {
         setSnackMsg('图片读取失败，请重试');
         setSnackVisible(true);
@@ -134,12 +162,13 @@ export default function DashboardScreen({ navigation }) {
       }
 
       setUploadingAvatar(true);
-      // 优先用 picker 直接给出的 base64；缺失则从 uri 兜底读取
       let base64 = asset.base64;
       if (!base64) {
+        console.log('[avatar] base64 为空，走 uriToBase64 兜底');
         try {
           base64 = await uriToBase64(asset.uri);
         } catch (e) {
+          console.error('[avatar] uriToBase64 失败:', e);
           setSnackMsg('图片解析失败：' + (e.message || '未知错误'));
           setSnackVisible(true);
           return;
@@ -153,15 +182,19 @@ export default function DashboardScreen({ navigation }) {
 
       const mime = asset.mimeType || 'image/jpeg';
       const dataUri = `data:${mime};base64,${base64}`;
+      console.log('[avatar] 开始上传, dataUri 长度:', dataUri.length);
       const res = await uploadAvatar(dataUri);
-      // 立刻更新本地状态，用户立刻能看到新头像
+      console.log('[avatar] 上传响应:', JSON.stringify(res));
+      const avatarUrl = res?.data?.avatar || dataUri;
+      console.log('[avatar] 最终 avatar URL 长度:', avatarUrl.length);
       setUserInfo((prev) => ({
         ...prev,
-        avatar: res?.data?.avatar || dataUri,
+        avatar: avatarUrl,
       }));
       setSnackMsg('✅ 头像已更新');
       setSnackVisible(true);
     } catch (err) {
+      console.error('[avatar] 异常:', err);
       setSnackMsg(err.message || '头像上传失败');
       setSnackVisible(true);
     } finally {
@@ -331,7 +364,13 @@ export default function DashboardScreen({ navigation }) {
                 style={styles.avatarWrap}
               >
                 {userInfo.avatar ? (
-                  <Image source={{ uri: userInfo.avatar }} style={styles.avatarImg} />
+                  <Image
+                    source={{ uri: userInfo.avatar }}
+                    style={styles.avatarImg}
+                    resizeMode="cover"
+                    onError={(e) => console.error('[avatar] Image 加载失败:', e.nativeEvent?.error, 'uri 前100字符:', userInfo.avatar?.substring(0, 100))}
+                    onLoad={() => console.log('[avatar] Image 加载成功')}
+                  />
                 ) : (
                   <View style={styles.avatarPlaceholder}>
                     <RNText style={styles.avatarPlaceholderText}>👤</RNText>
@@ -519,10 +558,11 @@ export default function DashboardScreen({ navigation }) {
           </ModernCard>
         </TouchableOpacity>
 
-        <Snackbar visible={snackVisible} onDismiss={() => setSnackVisible(false)} duration={2000}>
-          {snackMsg}
-        </Snackbar>
       </ScrollView>
+
+      <Snackbar visible={snackVisible} onDismiss={() => setSnackVisible(false)} duration={3000}>
+        {snackMsg}
+      </Snackbar>
 
       {/* ── 弹窗们（放在 Portal 里保证层级） ──────────────── */}
       <Portal>
