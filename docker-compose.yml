@@ -1,5 +1,5 @@
-# 考研助手 — Docker Compose 部署
-# 使用: docker-compose up -d
+# 考研助手 — Docker Compose 一键部署
+# 使用: cp .env.example .env → 编辑 .env → docker-compose up -d
 # 前提: 先执行 mvn package -DskipTests 生成各模块 jar
 
 services:
@@ -9,7 +9,7 @@ services:
     environment:
       POSTGRES_DB: kaoyan
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 123456
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-123456}
     ports:
       - "5432:5432"
     volumes:
@@ -19,6 +19,17 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: kaoyan-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   host:
     build: ./kaoyan-host
@@ -31,10 +42,19 @@ services:
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/kaoyan
       SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: 123456
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-123456}
+      SPRING_DATA_REDIS_HOST: redis
       MCP_RAG_URL: http://rag:8091
       MCP_QUESTION_URL: http://question:8092
       MCP_KNOWLEDGE_URL: http://knowledge:8093
+      LLM_API_KEY: ${LLM_API_KEY:-sk-e55e0a57fff842eb8386f6042467cfc4}
+      LLM_API_URL: ${LLM_API_URL:-https://api.deepseek.com}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-v4-pro}
+      LLM_EMBEDDING_API_URL: ${LLM_EMBEDDING_API_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      LLM_EMBEDDING_API_KEY: ${LLM_EMBEDDING_API_KEY:-sk-0f77a6941aff43bab6b8d21db90134bf}
+      LLM_MULTIMODAL_API_URL: ${LLM_MULTIMODAL_API_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      LLM_MULTIMODAL_API_KEY: ${LLM_MULTIMODAL_API_KEY:-sk-0f77a6941aff43bab6b8d21db90134bf}
+      FILE_UPLOAD_DIR: ${FILE_UPLOAD_DIR:-./uploads}
 
   rag:
     build: ./kaoyan-rag-server
@@ -47,7 +67,9 @@ services:
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/kaoyan
       SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: 123456
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-123456}
+      LLM_EMBEDDING_API_URL: ${LLM_EMBEDDING_API_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      LLM_EMBEDDING_API_KEY: ${LLM_EMBEDDING_API_KEY:-sk-0f77a6941aff43bab6b8d21db90134bf}
 
   question:
     build: ./kaoyan-question-server
@@ -60,7 +82,7 @@ services:
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/kaoyan
       SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: 123456
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-123456}
 
   knowledge:
     build: ./kaoyan-knowledge-server
@@ -73,7 +95,7 @@ services:
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/kaoyan
       SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: 123456
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-123456}
 
 volumes:
   pgdata:

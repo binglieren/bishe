@@ -1,8 +1,11 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// 部署时改这里：笔记本的局域网 IP
+const DEFAULT_BASE_URL = 'http://192.168.0.104:8088/api';
+
 const request = axios.create({
-  baseURL: 'http://192.168.0.104:8088/api',
+  baseURL: DEFAULT_BASE_URL,
   timeout: 120000,
 });
 
