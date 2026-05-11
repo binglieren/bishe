@@ -6,7 +6,15 @@ import com.example.kaoyan.dto.ChatSessionDTO;
 import com.example.kaoyan.entity.*;
 import com.example.kaoyan.repository.*;
 import com.example.kaoyan.util.AgentDebugLog;
+import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.store.embedding.EmbeddingMatch;
+import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
+import dev.langchain4j.store.embedding.EmbeddingStore;
+import dev.langchain4j.store.embedding.EmbeddingSearchResult;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,12 +23,14 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class ChatService {
 
     private final ChatSessionRepository chatSessionRepository;
     private final ChatMessageRepository chatMessageRepository;
-    private final DocumentChunkRepository documentChunkRepository;
+    private final EmbeddingStore<TextSegment> embeddingStore;
+    private final EmbeddingModel embeddingModel;
     private final SessionKbBindingRepository sessionKbBindingRepository;
     private final KnowledgeBaseRepository knowledgeBaseRepository;
     private final DocumentRepository documentRepository;
@@ -160,6 +170,15 @@ public class ChatService {
                 .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
         if (!session.getUserId().equals(userId)) throw new IllegalArgumentException("无权操作此会话");
         session.setKnowledgeBaseId(kbId); // 兼容旧字段
+        // 同时写入多KB绑定表，确保RAG检索能找到
+        sessionKbBindingRepository.deleteBySessionId(sessionId);
+        if (kbId != null) {
+            SessionKbBinding binding = new SessionKbBinding();
+            binding.setSessionId(sessionId);
+            binding.setKbId(kbId);
+            binding.setWeight(1.0);
+            sessionKbBindingRepository.save(binding);
+        }
         return chatSessionRepository.save(session);
     }
 
@@ -225,6 +244,26 @@ public class ChatService {
         List<SessionKbBinding> remaining = sessionKbBindingRepository.findBySessionId(sessionId);
         session.setKnowledgeBaseId(remaining.isEmpty() ? null : remaining.get(0).getKbId());
         chatSessionRepository.save(session);
+    }
+
+    /** 新会话自动继承用户最近的知识库绑定 */
+    @Transactional
+    public void copyLastKbBinding(Long userId, Long newSessionId) {
+        List<ChatSession> sessions = chatSessionRepository.findByUserIdOrderByUpdatedAtDesc(userId);
+        for (ChatSession s : sessions) {
+            if (s.getId().equals(newSessionId)) continue;
+            List<SessionKbBinding> bindings = sessionKbBindingRepository.findBySessionId(s.getId());
+            if (!bindings.isEmpty()) {
+                for (SessionKbBinding b : bindings) {
+                    SessionKbBinding copy = new SessionKbBinding();
+                    copy.setSessionId(newSessionId);
+                    copy.setKbId(b.getKbId());
+                    copy.setWeight(b.getWeight());
+                    sessionKbBindingRepository.save(copy);
+                }
+                return;
+            }
+        }
     }
 
     // === 会话 Prompt 设置 ===
@@ -415,37 +454,73 @@ public class ChatService {
     }
 
     /**
-     * F2 + F4: 多知识库联合检索 + 结构化上下文注入
+     * F2 + F4: 多知识库联合检索 + 结构化上下文注入 (LangChain4j)
      */
     private String buildRagContext(String queryText, Long sessionId, Long userId, String userMessage) {
         List<SessionKbBinding> bindings = sessionKbBindingRepository.findBySessionId(sessionId);
         if (bindings.isEmpty()) return "";
 
         try {
-            float[] queryVector = llmService.getEmbedding(queryText, userId);
-            String vectorStr = llmService.vectorToString(queryVector);
+            Set<String> kbIdSet = bindings.stream()
+                    .map(b -> String.valueOf(b.getKbId()))
+                    .collect(Collectors.toSet());
 
-            // 多知识库检索 — 按 kbIds 数组一次性查询
-            String kbIdsArray = "{" + bindings.stream()
-                    .map(b -> b.getKbId().toString())
-                    .collect(Collectors.joining(",")) + "}";
+            // LangChain4j 向量检索
+            Embedding queryEmbedding = embeddingModel.embed(queryText).content();
+            EmbeddingSearchResult<TextSegment> searchResult = embeddingStore.search(
+                    EmbeddingSearchRequest.builder()
+                            .queryEmbedding(queryEmbedding)
+                            .maxResults(30)
+                            .build());
 
-            List<Object[]> rawResults = documentChunkRepository.findSimilarChunksInKbs(kbIdsArray, vectorStr, 8);
+            // 按 metadata 过滤
+            List<EmbeddingMatch<TextSegment>> filtered = searchResult.matches().stream()
+                    .filter(m -> m.embedded() != null && m.embedded().metadata() != null)
+                    .filter(m -> kbIdSet.contains(m.embedded().metadata().getString("kb_id")))
+                    .filter(m -> "true".equals(m.embedded().metadata().getString("enabled")))
+                    .toList();
 
-            // 按知识库分组，限制每库 top-3
-            Map<Long, List<Object[]>> grouped = new LinkedHashMap<>();
-            for (Object[] row : rawResults) {
-                Long kbId = ((Number) row[2]).longValue();
-                grouped.computeIfAbsent(kbId, k -> new ArrayList<>()).add(row);
-                if (grouped.get(kbId).size() >= 3) {
-                    // 跳过超限行
+            if (filtered.isEmpty()) return "";
+
+            // 邻chunk扩展：为每个匹配块带入前后各1个相邻块
+            Set<String> expandedIds = new HashSet<>();
+            Map<String, Map<Integer, EmbeddingMatch<TextSegment>>> docIndex = new LinkedHashMap<>();
+            for (EmbeddingMatch<TextSegment> m : filtered) {
+                String docId = m.embedded().metadata().getString("document_id");
+                int idx = Integer.parseInt(m.embedded().metadata().getString("chunk_index"));
+                docIndex.computeIfAbsent(docId, k -> new LinkedHashMap<>()).put(idx, m);
+            }
+            for (EmbeddingMatch<TextSegment> best : filtered.subList(0, Math.min(6, filtered.size()))) {
+                String docId = best.embedded().metadata().getString("document_id");
+                int idx = Integer.parseInt(best.embedded().metadata().getString("chunk_index"));
+                Map<Integer, EmbeddingMatch<TextSegment>> neighbors = docIndex.get(docId);
+                if (neighbors != null) {
+                    for (int offset = -1; offset <= 1; offset++) {
+                        if (neighbors.containsKey(idx + offset)) {
+                            expandedIds.add(docId + ":" + (idx + offset));
+                        }
+                    }
                 }
             }
 
-            // 构建结构化上下文
+            // 按知识库分组，只展示扩展后的chunk
+            Map<String, List<EmbeddingMatch<TextSegment>>> grouped = new LinkedHashMap<>();
+            for (EmbeddingMatch<TextSegment> match : filtered) {
+                String kbId = match.embedded().metadata().getString("kb_id");
+                String docId = match.embedded().metadata().getString("document_id");
+                int idx = Integer.parseInt(match.embedded().metadata().getString("chunk_index"));
+                if (!expandedIds.contains(docId + ":" + idx)) continue;
+                grouped.computeIfAbsent(kbId, k -> new ArrayList<>()).add(match);
+            }
+
+            // 为每个KB按chunk_index排序
+            for (List<EmbeddingMatch<TextSegment>> list : grouped.values()) {
+                list.sort(Comparator.comparingInt(m -> Integer.parseInt(m.embedded().metadata().getString("chunk_index"))));
+            }
+
             StringBuilder ctx = new StringBuilder("## 参考资料（来自已绑定的知识库）\n\n");
 
-            // 知识库元信息
+            // 知识库元信息 + 本次检索统计
             List<Long> kbIds = bindings.stream().map(SessionKbBinding::getKbId).toList();
             List<KnowledgeBase> kbs = knowledgeBaseRepository.findAllById(kbIds);
             ctx.append("### 已绑定的知识库\n");
@@ -457,40 +532,40 @@ public class ChatService {
                 }
                 ctx.append("（").append(docCount).append(" 份文档）\n");
             }
+            ctx.append("\n本次检索匹配到 ").append(filtered.size()).append(" 个片段\n\n");
 
-            if (!rawResults.isEmpty()) {
-                ctx.append("\n### 相关文档片段\n\n");
-                int totalShown = 0;
-                for (Map.Entry<Long, List<Object[]>> entry : grouped.entrySet()) {
-                    Long kbId = entry.getKey();
-                    String kbName = kbs.stream()
-                            .filter(k -> k.getId().equals(kbId))
-                            .findFirst().map(KnowledgeBase::getName).orElse("未知知识库");
+            ctx.append("### 相关文档片段（含上下文）\n\n");
+            int totalShown = 0;
+            for (Map.Entry<String, List<EmbeddingMatch<TextSegment>>> entry : grouped.entrySet()) {
+                String kbIdStr = entry.getKey();
+                Long kbId = Long.valueOf(kbIdStr);
+                String kbName = kbs.stream()
+                        .filter(k -> k.getId().equals(kbId))
+                        .findFirst().map(KnowledgeBase::getName).orElse("未知知识库");
 
-                    for (Object[] row : entry.getValue()) {
-                        if (totalShown >= 6) break;
-                        String content = row[0] instanceof DocumentChunk c ? c.getContent() : String.valueOf(row[0]);
-                        String docName = row.length > 1 ? String.valueOf(row[1]) : "未知文档";
-                        Double score = null;
-                        if (row.length > 3 && row[3] instanceof Double d) score = d;
+                for (EmbeddingMatch<TextSegment> match : entry.getValue()) {
+                    if (totalShown >= 10) break;
+                    TextSegment seg = match.embedded();
+                    String content = seg.text();
+                    String docName = seg.metadata().getString("filename");
+                    if (docName == null) docName = "未知文档";
+                    double score = match.score();
+                    int chunkIdx = Integer.parseInt(seg.metadata().getString("chunk_index"));
 
-                        ctx.append("> **[知识库「").append(kbName).append("」]《").append(docName).append("》");
-                        if (score != null) {
-                            double pct = Math.round(score * 100);
-                            ctx.append(" 相关度: ").append((int) pct).append("%");
-                        }
-                        ctx.append("**\n>\n");
-                        String trimmed = content.length() > 500 ? content.substring(0, 500) + "…" : content;
-                        ctx.append("> ").append(trimmed.replace("\n", "\n> ")).append("\n>\n");
-                        totalShown++;
-                    }
-                    if (totalShown >= 6) break;
+                    ctx.append("> **[知识库「").append(kbName).append("」]《").append(docName).append("》#").append(chunkIdx + 1);
+                    ctx.append(" 相关度: ").append((int) Math.round(score * 100)).append("%");
+                    ctx.append("**\n>\n");
+                    String trimmed = content.length() > 500 ? content.substring(0, 500) + "…" : content;
+                    ctx.append("> ").append(trimmed.replace("\n", "\n> ")).append("\n>\n");
+                    totalShown++;
                 }
+                if (totalShown >= 10) break;
             }
 
             return ctx.toString();
+
         } catch (Exception e) {
-            AgentDebugLog.ndjson("H2skip", "ChatService.buildRagContext", "RAG failed", "{\"error\":\"" + e.getMessage() + "\"}");
+            log.warn("RAG检索失败: {}", e.getMessage());
             return "";
         }
     }
@@ -550,34 +625,70 @@ public class ChatService {
         // 1. 解析系统 Prompt（F1：会话级覆盖）
         String systemPrompt = resolveSystemPrompt(userId, sessionId);
 
-        // 2. RAG 检索（F2 + F4）
+        // 2. RAG 检索（F2 + F4）LangChain4j — 含邻chunk扩展
         List<SessionKbBinding> bindings = sessionKbBindingRepository.findBySessionId(sessionId);
         if (!bindings.isEmpty()) {
             try {
-                float[] queryVector = llmService.getEmbedding(userMessage, userId);
-                String vectorStr = llmService.vectorToString(queryVector);
-                String kbIdsArray = "{" + bindings.stream()
-                        .map(b -> b.getKbId().toString())
-                        .collect(Collectors.joining(",")) + "}";
-                List<Object[]> rawResults = documentChunkRepository.findSimilarChunksInKbs(kbIdsArray, vectorStr, 5);
-                if (!rawResults.isEmpty()) {
-                    StringBuilder ctx = new StringBuilder("\n\n## 参考资料\n");
+                Set<String> kbIdSet = bindings.stream()
+                        .map(b -> String.valueOf(b.getKbId()))
+                        .collect(Collectors.toSet());
+                Embedding queryEmbedding = embeddingModel.embed(userMessage).content();
+                EmbeddingSearchResult<TextSegment> sr = embeddingStore.search(
+                        EmbeddingSearchRequest.builder()
+                                .queryEmbedding(queryEmbedding)
+                                .maxResults(50)
+                                .build());
+
+                List<EmbeddingMatch<TextSegment>> filtered = sr.matches().stream()
+                        .filter(m -> m.embedded() != null && m.embedded().metadata() != null)
+                        .filter(m -> kbIdSet.contains(m.embedded().metadata().getString("kb_id")))
+                        .filter(m -> "true".equals(m.embedded().metadata().getString("enabled")))
+                        .toList();
+
+                if (!filtered.isEmpty()) {
+                    // 邻chunk扩展
+                    Set<String> expandedIds = new HashSet<>();
+                    Map<String, Map<Integer, EmbeddingMatch<TextSegment>>> docIndex = new LinkedHashMap<>();
+                    for (var m : filtered) {
+                        String docId = m.embedded().metadata().getString("document_id");
+                        int idx = Integer.parseInt(m.embedded().metadata().getString("chunk_index"));
+                        docIndex.computeIfAbsent(docId, k -> new LinkedHashMap<>()).put(idx, m);
+                    }
+                    for (var best : filtered.subList(0, Math.min(5, filtered.size()))) {
+                        String docId = best.embedded().metadata().getString("document_id");
+                        int idx = Integer.parseInt(best.embedded().metadata().getString("chunk_index"));
+                        var neighbors = docIndex.get(docId);
+                        if (neighbors != null) {
+                            for (int offset = -1; offset <= 1; offset++) {
+                                if (neighbors.containsKey(idx + offset)) expandedIds.add(docId + ":" + (idx + offset));
+                            }
+                        }
+                    }
+
+                    StringBuilder ctx = new StringBuilder("\n\n## 参考资料（匹配 ").append(filtered.size()).append(" 个片段）\n");
+                    log.info("[RAG] 检索到 {} 个匹配片段", filtered.size());
                     List<Long> kbIds = bindings.stream().map(SessionKbBinding::getKbId).toList();
                     List<KnowledgeBase> kbs = knowledgeBaseRepository.findAllById(kbIds);
-                    for (int i = 0; i < Math.min(rawResults.size(), 5); i++) {
-                        Object[] row = rawResults.get(i);
-                        String content = row[0] instanceof DocumentChunk c ? c.getContent() : String.valueOf(row[0]);
-                        Long kbId = row.length > 2 && row[2] instanceof Number n ? n.longValue() : null;
-                        String kbName = kbId != null
-                                ? kbs.stream().filter(k -> k.getId().equals(kbId))
-                                        .findFirst().map(KnowledgeBase::getName).orElse("未知")
-                                : "未知";
-                        ctx.append("\n> [").append(kbName).append("] ")
-                                .append(content.length() > 300 ? content.substring(0, 300) + "…" : content);
+                    List<EmbeddingMatch<TextSegment>> expanded = filtered.stream()
+                            .filter(m -> expandedIds.contains(m.embedded().metadata().getString("document_id") + ":"
+                                    + m.embedded().metadata().getString("chunk_index")))
+                            .sorted(Comparator.comparingInt(m -> Integer.parseInt(m.embedded().metadata().getString("chunk_index"))))
+                            .toList();
+                    for (var match : expanded) {
+                        TextSegment seg = match.embedded();
+                        Long kbId = Long.valueOf(seg.metadata().getString("kb_id"));
+                        String kbName = kbs.stream().filter(k -> k.getId().equals(kbId))
+                                .findFirst().map(KnowledgeBase::getName).orElse("未知");
+                        String docName = seg.metadata().getString("filename");
+                        int chunkIdx = Integer.parseInt(seg.metadata().getString("chunk_index"));
+                        ctx.append("\n> [").append(kbName).append("]《").append(docName).append("》#").append(chunkIdx + 1);
+                        ctx.append(" ").append(seg.text().length() > 300 ? seg.text().substring(0, 300) + "…" : seg.text());
                     }
                     systemPrompt += ctx.toString();
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                log.warn("[RAG] 检索异常: {}", e.getMessage());
+            }
         }
 
         messages.add(Map.of("role", "system", "content", systemPrompt));

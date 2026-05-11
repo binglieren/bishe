@@ -1,8 +1,13 @@
 package com.example.kaoyan.service;
 
 import com.example.kaoyan.entity.Document;
-import com.example.kaoyan.repository.DocumentChunkRepository;
 import com.example.kaoyan.repository.DocumentRepository;
+import dev.langchain4j.data.document.DocumentSplitter;
+import dev.langchain4j.data.document.splitter.DocumentSplitters;
+import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.store.embedding.EmbeddingStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.Loader;
@@ -40,50 +45,82 @@ import java.util.zip.ZipFile;
 public class DocumentProcessor {
 
     private final DocumentRepository documentRepository;
-    private final DocumentChunkRepository documentChunkRepository;
+    private final EmbeddingModel embeddingModel;
+    private final EmbeddingStore<TextSegment> embeddingStore;
     private final LlmService llmService;
 
     private static final int OCR_DPI = 100;
     private static final int MAX_PAGE_WIDTH = 1000;
     private static final int MAX_PAGE_HEIGHT = 1500;
     private static final int PAGES_PER_BATCH = 15;
+    private static final int TEXT_THRESHOLD = 500;  // 低于500字视为扫描版PDF，启动OCR
+    private final DocumentSplitter splitter = DocumentSplitters.recursive(500, 50);
 
     @Async
     public void processAsync(Document document, String filePath) {
         try {
             String text = extractText(filePath, document.getFileType());
             String lowerType = document.getFileType() != null ? document.getFileType().toLowerCase() : "";
+            String fileName = new File(filePath).getName().toLowerCase();
 
-            boolean isImage = lowerType.contains("image");
-            boolean needsOcr = isImage || (text == null || text.trim().length() < 100);
+            boolean isImage = lowerType.contains("image")
+                    || fileName.matches(".*\\.(jpg|jpeg|png|gif|bmp|webp)$");
+            boolean isPdf = lowerType.contains("pdf") || fileName.endsWith(".pdf");
+            boolean textTooShort = text == null || text.trim().length() < TEXT_THRESHOLD;
 
-            if (needsOcr) {
-                if (isImage) {
-                    log.info("图片文件，启动LLM OCR: {}", document.getOriginalFilename());
-                    text = llmOcrImage(filePath, document.getUserId());
-                } else {
-                    log.info("文本过短({}字)，启动LLM OCR: {}",
-                            text == null ? 0 : text.length(), document.getOriginalFilename());
-                    text = llmOcrPdf(filePath, document.getUserId());
-                }
+            if (isImage) {
+                log.info("图片文件，启动LLM OCR: {}", document.getOriginalFilename());
+                text = llmOcrImage(filePath, document.getUserId());
+            } else if (isPdf && textTooShort) {
+                log.info("PDF文本过短({}字)，启动LLM OCR: {}",
+                        text == null ? 0 : text.trim().length(), document.getOriginalFilename());
+                text = llmOcrPdf(filePath, document.getUserId());
+            } else if (!isPdf && textTooShort && lowerType.contains("epub")) {
+                log.info("EPUB文本过短({}字)，启动LLM OCR: {}",
+                        text == null ? 0 : text.trim().length(), document.getOriginalFilename());
+                text = llmOcrPdf(filePath, document.getUserId());
+            } else {
+                log.info("文本提取成功({}字)，跳过OCR: {}",
+                        text != null ? text.trim().length() : 0, document.getOriginalFilename());
             }
 
             if (text == null || text.trim().isEmpty()) {
                 log.warn("未能提取到任何文本: {}", document.getOriginalFilename());
-                updateStatus(document.getId(), "FAILED", "未提取到文本内容，可能是扫描版PDF且OCR失败");
+                updateStatus(document.getId(), "FAILED", "未提取到文本内容");
                 return;
             }
 
-            List<String> chunks = splitText(text, 500, 50);
-            for (int i = 0; i < chunks.size(); i++) {
-                String chunkText = chunks.get(i);
-                float[] embedding = llmService.getEmbedding(chunkText, document.getUserId());
-                String vectorStr = llmService.vectorToString(embedding);
-                documentChunkRepository.insertChunk(document.getId(), chunkText, i, vectorStr);
+            // LangChain4j 分块
+            List<TextSegment> segments = splitter.split(
+                    dev.langchain4j.data.document.Document.from(text));
+
+            // 分批向量化（DashScope 限制每批最多 10 条）
+            List<String> segmentTexts = segments.stream().map(TextSegment::text).toList();
+            List<Embedding> allEmbeddings = new ArrayList<>();
+            int batchSize = 10;
+            for (int i = 0; i < segmentTexts.size(); i += batchSize) {
+                int end = Math.min(i + batchSize, segmentTexts.size());
+                List<TextSegment> batch = new ArrayList<>();
+                for (int j = i; j < end; j++) {
+                    batch.add(TextSegment.from(segmentTexts.get(j)));
+                }
+                List<Embedding> batchEmbeddings = embeddingModel.embedAll(batch).content();
+                allEmbeddings.addAll(batchEmbeddings);
+            }
+
+            // 写入 metadata 并入库
+            for (int i = 0; i < segments.size(); i++) {
+                TextSegment seg = segments.get(i);
+                seg.metadata().put("kb_id", String.valueOf(document.getKnowledgeBaseId()));
+                seg.metadata().put("document_id", String.valueOf(document.getId()));
+                seg.metadata().put("filename", document.getOriginalFilename());
+                seg.metadata().put("chunk_index", String.valueOf(i));
+                seg.metadata().put("enabled", "true");
+                embeddingStore.add(allEmbeddings.get(i), seg);
             }
 
             updateStatus(document.getId(), "COMPLETED", null);
-            log.info("文档处理完成 ({} chunks): {}", chunks.size(), document.getOriginalFilename());
+            log.info("文档处理完成 ({} chunks): {}", segments.size(), document.getOriginalFilename());
 
         } catch (Exception e) {
             log.error("文档处理失败: {}", document.getOriginalFilename(), e);
@@ -94,25 +131,16 @@ public class DocumentProcessor {
         }
     }
 
-    /** 单张图片 OCR */
     private String llmOcrImage(String filePath, Long userId) {
         try {
             BufferedImage image = ImageIO.read(new File(filePath));
-            if (image == null) {
-                log.error("无法读取图片: {}", filePath);
-                return null;
-            }
+            if (image == null) { log.error("无法读取图片: {}", filePath); return null; }
             image = resizeIfNeeded(image);
             String base64 = bufferedImageToBase64(image);
-
             return ocrBatch(List.of(base64), 0, 1, 1, userId);
-        } catch (IOException e) {
-            log.error("图片 OCR 失败", e);
-            return null;
-        }
+        } catch (IOException e) { log.error("图片 OCR 失败", e); return null; }
     }
 
-    /** LLM OCR：按批次顺序处理 */
     private String llmOcrPdf(String filePath, Long userId) {
         try (PDDocument pdf = Loader.loadPDF(new File(filePath))) {
             int totalPages = pdf.getNumberOfPages();
@@ -122,25 +150,19 @@ public class DocumentProcessor {
             for (int batchStart = 0; batchStart < totalPages; batchStart += PAGES_PER_BATCH) {
                 int batchEnd = Math.min(batchStart + PAGES_PER_BATCH, totalPages);
                 List<String> pageImages = new ArrayList<>();
-
                 for (int p = batchStart; p < batchEnd; p++) {
                     BufferedImage image = renderer.renderImageWithDPI(p, OCR_DPI);
                     image = resizeIfNeeded(image);
                     pageImages.add(bufferedImageToBase64(image));
                 }
-
                 String batchText = ocrBatch(pageImages, batchStart, batchEnd, totalPages, userId);
                 if (batchText != null && !batchText.isBlank()) {
                     fullText.append(batchText).append("\n\n");
                 }
                 log.info("OCR 进度: {}/{} 页", batchEnd, totalPages);
             }
-
             return fullText.toString().trim();
-        } catch (IOException e) {
-            log.error("LLM OCR 失败", e);
-            return null;
-        }
+        } catch (IOException e) { log.error("LLM OCR 失败", e); return null; }
     }
 
     private String ocrBatch(List<String> pageImages, int startPage, int endPage, int totalPages, Long userId) {
@@ -152,36 +174,20 @@ public class DocumentProcessor {
 
         List<Map<String, Object>> contentParts = new ArrayList<>();
         contentParts.add(Map.of("type", "text", "text", prompt));
-
         for (String img : pageImages) {
             contentParts.add(Map.of("type", "image_url", "image_url",
                     Map.of("url", "data:image/jpeg;base64," + img)));
         }
-
-        List<Map<String, Object>> messages = List.of(
-                Map.of("role", "user", "content", contentParts)
-        );
-
         try {
-            return llmService.chatMultimodal(messages, userId);
-        } catch (Exception e) {
-            log.error("OCR 批次 {}-{} 失败", startPage + 1, endPage, e);
-            return null;
-        }
+            return llmService.chatMultimodal(List.of(Map.of("role", "user", "content", contentParts)), userId);
+        } catch (Exception e) { log.error("OCR 批次 {}-{} 失败", startPage + 1, endPage, e); return null; }
     }
 
     private BufferedImage resizeIfNeeded(BufferedImage image) {
-        int w = image.getWidth();
-        int h = image.getHeight();
+        int w = image.getWidth(), h = image.getHeight();
         if (w <= MAX_PAGE_WIDTH && h <= MAX_PAGE_HEIGHT) return image;
-
-        double scaleW = (double) MAX_PAGE_WIDTH / w;
-        double scaleH = (double) MAX_PAGE_HEIGHT / h;
-        double scale = Math.min(scaleW, scaleH);
-
-        int newW = (int) (w * scale);
-        int newH = (int) (h * scale);
-
+        double scale = Math.min((double) MAX_PAGE_WIDTH / w, (double) MAX_PAGE_HEIGHT / h);
+        int newW = (int) (w * scale), newH = (int) (h * scale);
         BufferedImage resized = new BufferedImage(newW, newH, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = resized.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
@@ -199,30 +205,16 @@ public class DocumentProcessor {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     void updateStatus(Long documentId, String status, String errorMessage) {
         Document doc = documentRepository.findById(documentId).orElse(null);
-        if (doc != null) {
-            doc.setStatus(status);
-            doc.setErrorMessage(errorMessage);
-            documentRepository.save(doc);
-        }
+        if (doc != null) { doc.setStatus(status); doc.setErrorMessage(errorMessage); documentRepository.save(doc); }
     }
 
     private String extractText(String filePath, String fileType) throws IOException {
         String lower = fileType != null ? fileType.toLowerCase() : "";
         String fileName = new File(filePath).getName().toLowerCase();
-
-        if (lower.contains("pdf") || fileName.endsWith(".pdf")) {
-            return extractPdfText(filePath);
-        }
-        if (lower.contains("docx") || lower.contains("officedocument") || fileName.endsWith(".docx")) {
-            return extractDocxText(filePath);
-        }
-        if (lower.contains("epub") || fileName.endsWith(".epub")) {
-            return extractEpubText(filePath);
-        }
-        if (lower.contains("image") || fileName.matches(".*\\.(jpg|jpeg|png|gif|bmp|webp)$")) {
-            return null;
-        }
-
+        if (lower.contains("pdf") || fileName.endsWith(".pdf")) return extractPdfText(filePath);
+        if (lower.contains("docx") || lower.contains("officedocument") || fileName.endsWith(".docx")) return extractDocxText(filePath);
+        if (lower.contains("epub") || fileName.endsWith(".epub")) return extractEpubText(filePath);
+        if (lower.contains("image") || fileName.matches(".*\\.(jpg|jpeg|png|gif|bmp|webp)$")) return null;
         return Files.readString(Path.of(filePath), StandardCharsets.UTF_8);
     }
 
@@ -262,62 +254,9 @@ public class DocumentProcessor {
     }
 
     private String stripHtml(String html) {
-        return html.replaceAll("<[^>]+>", " ")
-                   .replaceAll("&nbsp;", " ")
-                   .replaceAll("&amp;", "&")
-                   .replaceAll("&lt;", "<")
-                   .replaceAll("&gt;", ">")
-                   .replaceAll("&quot;", "\"")
-                   .replaceAll("\\s+", " ");
-    }
-
-    private List<String> splitText(String text, int chunkSize, int overlap) {
-        List<String> chunks = new ArrayList<>();
-        if (text == null || text.isEmpty()) return chunks;
-
-        String[] paragraphs = text.split("\\n\\s*\\n");
-        StringBuilder current = new StringBuilder();
-
-        for (String para : paragraphs) {
-            String trimmed = para.trim();
-            if (trimmed.isEmpty()) continue;
-
-            if (current.length() + trimmed.length() > chunkSize && current.length() > 0) {
-                chunks.add(current.toString().trim());
-                String tail = current.length() > overlap
-                        ? current.substring(current.length() - overlap)
-                        : current.toString();
-                current = new StringBuilder(tail);
-            }
-
-            if (current.length() > 0) current.append("\n\n");
-            current.append(trimmed);
-
-            while (current.length() > chunkSize) {
-                int cutPos = findCutPosition(current.toString(), chunkSize);
-                chunks.add(current.substring(0, cutPos).trim());
-                String remaining = current.substring(Math.max(0, cutPos - overlap));
-                current = new StringBuilder(remaining);
-            }
-        }
-
-        if (current.length() > 0) {
-            chunks.add(current.toString().trim());
-        }
-        return chunks;
-    }
-
-    private int findCutPosition(String text, int target) {
-        if (text.length() <= target) return text.length();
-        int searchEnd = Math.min(text.length(), target + 100);
-        for (char delimiter : new char[]{'。', '！', '？', '.', '!', '?', '\n'}) {
-            int pos = text.lastIndexOf(delimiter, searchEnd);
-            if (pos > target - 100 && pos < searchEnd) {
-                return pos + 1;
-            }
-        }
-        int space = text.lastIndexOf(' ', target + 50);
-        if (space > target - 200) return space + 1;
-        return target;
+        return html.replaceAll("<[^>]+>", " ").replaceAll("&nbsp;", " ")
+                .replaceAll("&amp;", "&").replaceAll("&lt;", "<")
+                .replaceAll("&gt;", ">").replaceAll("&quot;", "\"")
+                .replaceAll("\\s+", " ");
     }
 }

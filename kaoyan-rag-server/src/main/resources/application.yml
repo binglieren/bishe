@@ -16,3 +16,21 @@ llm:
     api-url: https://dashscope.aliyuncs.com/compatible-mode/v1
     api-key: sk-0f77a6941aff43bab6b8d21db90134bf
     model: text-embedding-v4
+
+langchain4j:
+  open-ai:
+    embedding-model:
+      base-url: ${llm.embedding.api-url}
+      api-key: ${llm.embedding.api-key}
+      model-name: ${llm.embedding.model}
+      dimensions: 1536
+  pgvector:
+    host: localhost
+    port: 5432
+    database: kaoyan
+    user: postgres
+    password: 123456
+    table: langchain_chunks
+    dimension: 1536
+    create-table: false
+    drop-table-first: false

@@ -102,3 +102,32 @@ springdoc:
     path: /api-docs
   swagger-ui:
     path: /swagger-ui.html
+
+# LangChain4j 配置
+langchain4j:
+  open-ai:
+    embedding-model:
+      base-url: ${llm.embedding-api-url}
+      api-key: ${llm.embedding-api-key}
+      model-name: ${llm.embedding-model}
+      dimensions: 1536
+    chat-model:
+      base-url: ${llm.api-url}
+      api-key: ${llm.api-key}
+      model-name: ${llm.model}
+  pgvector:
+    host: localhost
+    port: 5432
+    database: kaoyan
+    user: postgres
+    password: 123456
+    table: langchain_chunks
+    dimension: 1536
+    create-table: true
+    drop-table-first: false
+
+# Agent 工具上下文（MCP 工具需要 session 级 kbIds）
+agent:
+  tools:
+    search-knowledge-base: true
+    search-question-bank: true

@@ -4,26 +4,23 @@ import com.example.kaoyan.dto.KnowledgeBaseDTO;
 import com.example.kaoyan.dto.KnowledgeBaseRequest;
 import com.example.kaoyan.entity.Document;
 import com.example.kaoyan.entity.KnowledgeBase;
-import com.example.kaoyan.repository.DocumentChunkRepository;
 import com.example.kaoyan.repository.DocumentRepository;
 import com.example.kaoyan.repository.KnowledgeBaseRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 知识库服务：多知识库管理 + 老数据自动迁移
- */
 @Service
 @RequiredArgsConstructor
 public class KnowledgeBaseService {
 
     private final KnowledgeBaseRepository knowledgeBaseRepository;
     private final DocumentRepository documentRepository;
-    private final DocumentChunkRepository documentChunkRepository;
+    private final JdbcTemplate jdbcTemplate;
 
     /**
      * 获取用户的全部知识库（含文档统计）。
@@ -90,7 +87,9 @@ public class KnowledgeBaseService {
         }
         List<Document> docs = documentRepository.findByUserIdAndKnowledgeBaseIdOrderByUploadTimeDesc(userId, kbId);
         for (Document doc : docs) {
-            documentChunkRepository.deleteByDocumentId(doc.getId());
+            jdbcTemplate.update(
+                    "DELETE FROM langchain_chunks WHERE metadata::jsonb->>'document_id' = ?",
+                    String.valueOf(doc.getId()));
         }
         documentRepository.deleteAll(docs);
         knowledgeBaseRepository.delete(kb);

@@ -39,9 +39,14 @@ public class ChatController {
     @PostMapping("/session")
     @Operation(summary = "创建对话会话")
     public Result<ChatSession> createSession(Authentication auth,
-                                              @RequestParam(required = false) String title) {
+                                              @RequestParam(required = false) String title,
+                                              @RequestParam(required = false) Long knowledgeBaseId) {
         Long userId = (Long) auth.getPrincipal();
-        return Result.success(chatService.createSession(userId, title));
+        ChatSession session = chatService.createSession(userId, title);
+        if (knowledgeBaseId != null) {
+            chatService.addSessionKnowledgeBase(userId, session.getId(), knowledgeBaseId);
+        }
+        return Result.success(session);
     }
 
     @GetMapping("/sessions")
@@ -209,7 +214,11 @@ public class ChatController {
         if (imageBase64 != null && !imageBase64.isBlank()) {
             Flux<String> flux = Flux.create(sink -> {
                 try {
-                    Long sid = reqSessionId != null ? reqSessionId : chatService.createSession(userId, null).getId();
+        Long sid = reqSessionId != null ? reqSessionId : chatService.createSession(userId, null).getId();
+        if (reqSessionId == null) {
+            // 新会话自动继承最近的知识库绑定
+            chatService.copyLastKbBinding(userId, sid);
+        }
                     emitter.send(SseEmitter.event().name("session").data(Map.of("sessionId", sid)));
                     ChatMessage reply = chatService.sendMessage(userId, sid, message, imageBase64);
                     String content = reply.getContent();

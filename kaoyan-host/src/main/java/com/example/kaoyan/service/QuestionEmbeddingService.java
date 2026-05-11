@@ -9,21 +9,16 @@ import com.example.kaoyan.repository.QuestionKnowledgePointRepository;
 import com.example.kaoyan.repository.QuestionOptionRepository;
 import com.example.kaoyan.repository.QuestionRepository;
 import com.example.kaoyan.util.AgentDebugLog;
+import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.store.embedding.EmbeddingStore;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
-/**
- * 题目向量化服务。
- *
- * 设计思路：
- *   - Embedding 输入 = 科目 + 题型 + 题干 + 选项 + 已打好的知识点标签
- *     把标签拼入文本，强化语义（不同标签的相似题在向量空间离得更近）
- *   - 先打标再 embed，所以 pipeline 是：extract → tag → embed
- *   - 失败不阻塞，标记 embedding_status = failed，允许后续重试
- */
 @Service
 @RequiredArgsConstructor
 public class QuestionEmbeddingService {
@@ -32,7 +27,8 @@ public class QuestionEmbeddingService {
     private final QuestionOptionRepository questionOptionRepository;
     private final QuestionKnowledgePointRepository qkpRepository;
     private final KnowledgePointRepository knowledgePointRepository;
-    private final LlmService llmService;
+    private final EmbeddingModel embeddingModel;
+    private final EmbeddingStore<TextSegment> embeddingStore;
 
     /** 为单题生成并存储 embedding。 */
     public boolean embedQuestion(Long questionId, Long userId) {
@@ -41,21 +37,29 @@ public class QuestionEmbeddingService {
 
         try {
             String text = buildEmbeddingText(q);
-            float[] vec = llmService.getEmbedding(text, userId);
-            if (vec == null || vec.length == 0) {
+            Embedding embedding = embeddingModel.embed(text).content();
+            if (embedding == null || embedding.vector().length == 0) {
                 q.setEmbeddingStatus("failed");
                 questionRepository.save(q);
                 return false;
             }
 
-            String vectorStr = llmService.vectorToString(vec);
+            // 存到 LangChain4j 向量表
+            TextSegment seg = TextSegment.from(text);
+            seg.metadata().put("type", "question");
+            seg.metadata().put("question_id", String.valueOf(questionId));
+            seg.metadata().put("subject", q.getSubject() != null ? q.getSubject() : "");
+            embeddingStore.add(embedding, seg);
+
+            // 同步更新 question.embedding 列（兼容 findSimilarByVector 等旧查询）
+            String vectorStr = embeddingToVectorString(embedding);
             questionRepository.updateEmbedding(questionId, vectorStr);
 
             q.setEmbeddingStatus("success");
             questionRepository.save(q);
 
             AgentDebugLog.ndjson("EMB", "QuestionEmbeddingService.embedQuestion", "ok",
-                    "{\"questionId\":" + questionId + ",\"dim\":" + vec.length + "}");
+                    "{\"questionId\":" + questionId + ",\"dim\":" + embedding.vector().length + "}");
             return true;
         } catch (Exception e) {
             AgentDebugLog.ndjson("EMB_ERR", "QuestionEmbeddingService.embedQuestion",
@@ -116,6 +120,17 @@ public class QuestionEmbeddingService {
                         kps.stream().map(KnowledgePoint::getName).collect(Collectors.joining(" / ")));
             }
         }
+        return sb.toString();
+    }
+
+    private String embeddingToVectorString(Embedding embedding) {
+        float[] vec = embedding.vector();
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < vec.length; i++) {
+            if (i > 0) sb.append(",");
+            sb.append(vec[i]);
+        }
+        sb.append("]");
         return sb.toString();
     }
 }
