@@ -6,7 +6,6 @@ import Login from './pages/Login';
 import DashboardPage from './pages/Dashboard';
 import UserManagement from './pages/UserManagement';
 import QuestionManagement from './pages/QuestionManagement';
-import ExamManagement from './pages/ExamManagement';
 import KnowledgePointManagement from './pages/KnowledgePointManagement';
 import ApiConfigManagement from './pages/ApiConfigManagement';
 
@@ -30,7 +29,6 @@ export default function App() {
             <Route path="dashboard" element={<DashboardPage />} />
             <Route path="users" element={<UserManagement />} />
             <Route path="questions" element={<QuestionManagement />} />
-            <Route path="exams" element={<ExamManagement />} />
             <Route path="knowledge-points" element={<KnowledgePointManagement />} />
             <Route path="api-config" element={<ApiConfigManagement />} />
           </Route>

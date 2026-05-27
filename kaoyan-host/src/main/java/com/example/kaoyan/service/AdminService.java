@@ -10,7 +10,6 @@ import com.example.kaoyan.repository.KnowledgePointRepository;
 import com.example.kaoyan.repository.QuestionRepository;
 import com.example.kaoyan.repository.UserRepository;
 import com.example.kaoyan.repository.WrongAnswerRepository;
-import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -37,7 +36,6 @@ public class AdminService {
     private final PasswordEncoder passwordEncoder;
     private final WrongAnswerRepository wrongAnswerRepository;
     private final KnowledgeMasteryRepository knowledgeMasteryRepository;
-    private final EntityManager entityManager;
 
     // ==================== 数据统计 ====================
 
@@ -150,12 +148,7 @@ public class AdminService {
         if (!questionRepository.existsById(questionId)) {
             throw new IllegalArgumentException("题目不存在");
         }
-        // 清理没有 ON DELETE CASCADE 的关联表
         wrongAnswerRepository.deleteByQuestionId(questionId);
-        entityManager.createNativeQuery("DELETE FROM exam_answer WHERE question_id = :qid")
-                .setParameter("qid", questionId).executeUpdate();
-        entityManager.createNativeQuery("DELETE FROM exam_question WHERE question_id = :qid")
-                .setParameter("qid", questionId).executeUpdate();
         questionRepository.deleteById(questionId);
     }
 

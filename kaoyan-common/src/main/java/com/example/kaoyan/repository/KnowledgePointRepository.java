@@ -20,6 +20,8 @@ public interface KnowledgePointRepository extends JpaRepository<KnowledgePoint, 
 
     Optional<KnowledgePoint> findByNameAndSubject(String name, String subject);
 
+    boolean existsBySubject(String subject);
+
     @Query("SELECT kp FROM KnowledgePoint kp WHERE kp.id IN " +
            "(SELECT DISTINCT uq.question.knowledgePointId FROM UserQuestion uq " +
            "WHERE uq.userId = :userId AND uq.question.knowledgePointId IS NOT NULL)")

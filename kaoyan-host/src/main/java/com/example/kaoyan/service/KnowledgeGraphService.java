@@ -123,6 +123,113 @@ public class KnowledgeGraphService {
     }
 
     // ==================================================
+    //  知识点目录树（含用户掌握度进度）
+    // ==================================================
+
+    public List<KpCatalogNodeDTO> buildCatalog(Long userId, String subject) {
+        List<KnowledgePoint> allKps = (subject == null || subject.isBlank())
+                ? kpRepo.findAll()
+                : kpRepo.findBySubject(subject);
+        if (allKps.isEmpty()) return Collections.emptyList();
+
+        // mastery 数据
+        Set<Long> kpIds = allKps.stream().map(KnowledgePoint::getId).collect(Collectors.toSet());
+        Map<Long, KnowledgeMastery> masteryMap = masteryRepo.findByUserId(userId).stream()
+                .filter(m -> kpIds.contains(m.getKnowledgePointId()))
+                .collect(Collectors.toMap(KnowledgeMastery::getKnowledgePointId, m -> m));
+
+        // 题目计数
+        Map<Long, Integer> qCountMap = qkpRepo.countQuestionsPerKp(subject).stream()
+                .collect(Collectors.toMap(
+                        row -> ((Number) row[0]).longValue(),
+                        row -> ((Number) row[1]).intValue()));
+
+        // 收藏
+        Set<Long> focusedIds = new HashSet<>(focusRepo.findKpIdsByUserId(userId));
+
+        // 递归构建树
+        return allKps.stream()
+                .filter(kp -> kp.getParentId() == null)
+                .sorted(Comparator.comparingInt(kp -> kp.getSortOrder() != null ? kp.getSortOrder() : 0))
+                .map(kp -> buildCatalogNode(kp, allKps, masteryMap, qCountMap, focusedIds))
+                .collect(Collectors.toList());
+    }
+
+    private KpCatalogNodeDTO buildCatalogNode(KnowledgePoint kp, List<KnowledgePoint> allKps,
+            Map<Long, KnowledgeMastery> masteryMap, Map<Long, Integer> qCountMap,
+            Set<Long> focusedIds) {
+
+        KpCatalogNodeDTO node = new KpCatalogNodeDTO();
+        node.setId(kp.getId());
+        node.setName(kp.getName());
+        node.setFocused(focusedIds.contains(kp.getId()));
+
+        // 子节点
+        List<KpCatalogNodeDTO> children = allKps.stream()
+                .filter(child -> Objects.equals(child.getParentId(), kp.getId()))
+                .sorted(Comparator.comparingInt(c -> c.getSortOrder() != null ? c.getSortOrder() : 0))
+                .map(child -> buildCatalogNode(child, allKps, masteryMap, qCountMap, focusedIds))
+                .collect(Collectors.toList());
+        node.setChildren(children);
+
+        if (children.isEmpty()) {
+            // 叶子节点：直接用 mastery 数据
+            KnowledgeMastery m = masteryMap.get(kp.getId());
+            int qCount = qCountMap.getOrDefault(kp.getId(), 0);
+            node.setQuestionCount(qCount);
+            if (m != null) {
+                node.setMastery(m.getMasteryLevel());
+                node.setCorrectCount(m.getCorrectCount());
+                double level = m.getMasteryLevel() != null
+                        ? m.getMasteryLevel().doubleValue() : 0;
+                node.setLevel(classifyLevel(level, m.getTotalCount()));
+            } else {
+                node.setMastery(BigDecimal.ZERO);
+                node.setCorrectCount(0);
+                node.setLevel("untouched");
+            }
+        } else {
+            // 父节点：聚合子节点数据
+            int totalQ = 0;
+            int totalCorrect = 0;
+            int strongCount = 0;
+            int total = 0;
+            double sumMastery = 0;
+            boolean allUntouched = true;
+
+            for (KpCatalogNodeDTO child : children) {
+                totalQ += child.getQuestionCount();
+                totalCorrect += child.getCorrectCount();
+                total++;
+                if (!"untouched".equals(child.getLevel())) allUntouched = false;
+                if ("strong".equals(child.getLevel())) strongCount++;
+                if (child.getMastery() != null) {
+                    sumMastery += child.getMastery().doubleValue() * child.getQuestionCount();
+                }
+            }
+            node.setQuestionCount(totalQ);
+            node.setCorrectCount(totalCorrect);
+
+            if (allUntouched || totalQ == 0) {
+                node.setMastery(BigDecimal.ZERO);
+                node.setLevel("untouched");
+            } else {
+                double avgMastery = sumMastery / Math.max(totalQ, 1);
+                node.setMastery(BigDecimal.valueOf(Math.min(1.0, avgMastery)));
+                if (avgMastery >= LEVEL_STRONG_MIN) {
+                    node.setLevel("strong");
+                } else if (avgMastery >= LEVEL_INTERMEDIATE_MIN) {
+                    node.setLevel("intermediate");
+                } else {
+                    node.setLevel("weak");
+                }
+            }
+        }
+
+        return node;
+    }
+
+    // ==================================================
     //  节点详情
     // ==================================================
 

@@ -32,19 +32,6 @@ export const updateQuestion = (questionId, data) =>
 export const deleteQuestion = (questionId) =>
   request.delete(`/admin/questions/${questionId}`);
 
-// 考试管理
-export const getExamList = (page = 0, size = 10) =>
-  request.get('/admin/exams', { params: { page, size } });
-
-export const createExam = (data) =>
-  request.post('/admin/exams', data);
-
-export const updateExam = (examId, data) =>
-  request.put(`/admin/exams/${examId}`, data);
-
-export const deleteExam = (examId) =>
-  request.delete(`/admin/exams/${examId}`);
-
 // 知识点管理
 export const getKnowledgePointList = (page = 0, size = 20) =>
   request.get('/admin/knowledge-points', { params: { page, size } });

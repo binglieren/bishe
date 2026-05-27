@@ -123,48 +123,6 @@ CREATE TABLE IF NOT EXISTS chat_message (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 12. 考试表
-CREATE TABLE IF NOT EXISTS exam (
-    id BIGSERIAL PRIMARY KEY,
-    title VARCHAR(200) NOT NULL,
-    subject VARCHAR(20) NOT NULL,
-    duration_minutes INTEGER NOT NULL,
-    total_score INTEGER NOT NULL,
-    description TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 13. 考试-题目关联表
-CREATE TABLE IF NOT EXISTS exam_question (
-    id BIGSERIAL PRIMARY KEY,
-    exam_id BIGINT NOT NULL REFERENCES exam(id) ON DELETE CASCADE,
-    question_id BIGINT NOT NULL REFERENCES question(id),
-    score INTEGER NOT NULL,
-    sort_order INTEGER DEFAULT 0
-);
-
--- 14. 考试记录表
-CREATE TABLE IF NOT EXISTS exam_record (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id),
-    exam_id BIGINT NOT NULL REFERENCES exam(id),
-    score INTEGER,
-    start_time TIMESTAMP NOT NULL,
-    end_time TIMESTAMP,
-    status VARCHAR(20) DEFAULT 'IN_PROGRESS',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 15. 考试答题表
-CREATE TABLE IF NOT EXISTS exam_answer (
-    id BIGSERIAL PRIMARY KEY,
-    record_id BIGINT NOT NULL REFERENCES exam_record(id) ON DELETE CASCADE,
-    question_id BIGINT NOT NULL REFERENCES question(id),
-    user_answer TEXT,
-    is_correct BOOLEAN,
-    score INTEGER DEFAULT 0
-);
-
 -- 16. AI 配置表（用户自主配置）
 CREATE TABLE IF NOT EXISTS ai_config (
     id BIGSERIAL PRIMARY KEY,

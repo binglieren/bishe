@@ -2,6 +2,7 @@ package com.example.kaoyan.controller;
 
 import com.example.kaoyan.dto.DiagnosisDTO;
 import com.example.kaoyan.dto.GraphResponseDTO;
+import com.example.kaoyan.dto.KpCatalogNodeDTO;
 import com.example.kaoyan.dto.KpDetailDTO;
 import com.example.kaoyan.service.KnowledgeGraphService;
 import com.example.kaoyan.util.Result;
@@ -32,6 +33,15 @@ public class KnowledgeGraphController {
             @RequestParam(required = false) String subject) {
         Long userId = (Long) auth.getPrincipal();
         return Result.success(graphService.buildGraph(userId, normalize(subject)));
+    }
+
+    @GetMapping("/catalog")
+    @Operation(summary = "取知识点目录树（含掌握度，用于目录视图）")
+    public Result<List<KpCatalogNodeDTO>> getCatalog(
+            Authentication auth,
+            @RequestParam(required = false) String subject) {
+        Long userId = (Long) auth.getPrincipal();
+        return Result.success(graphService.buildCatalog(userId, normalize(subject)));
     }
 
     @GetMapping("/kp/{kpId}/detail")

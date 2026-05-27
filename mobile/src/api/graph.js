@@ -1,5 +1,9 @@
 import request from './request';
 
+/** 取知识目录树（含掌握度，用于目录视图） */
+export const getKpCatalog = (subject) =>
+  request.get('/knowledge-graph/catalog', { params: { subject } });
+
 /**
  * 取知识图谱总数据
  * @param {string|null} subject  '数学' / '英语' / '专业课' / null（全部）

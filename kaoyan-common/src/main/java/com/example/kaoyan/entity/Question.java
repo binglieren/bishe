@@ -53,8 +53,8 @@ public class Question {
     @Column(length = 100)
     private String source;
 
-    @OneToMany(cascade = CascadeType.ALL, fetch = FetchType.EAGER)
-    @JoinColumn(name = "question_id")
+    @OneToMany(fetch = FetchType.EAGER)
+    @JoinColumn(name = "question_id", insertable = false, updatable = false)
     private List<QuestionOption> options;
 
     /** Embedding 处理状态: pending | success | failed | skipped */

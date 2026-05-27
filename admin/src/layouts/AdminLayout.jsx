@@ -5,7 +5,6 @@ import {
   DashboardOutlined,
   UserOutlined,
   FileTextOutlined,
-  FormOutlined,
   ApartmentOutlined,
   ApiOutlined,
   LogoutOutlined,
@@ -19,7 +18,6 @@ const menuItems = [
   { key: '/dashboard', icon: <DashboardOutlined />, label: '仪表盘' },
   { key: '/users', icon: <UserOutlined />, label: '用户管理' },
   { key: '/questions', icon: <FileTextOutlined />, label: '题库管理' },
-  { key: '/exams', icon: <FormOutlined />, label: '考试管理' },
   { key: '/knowledge-points', icon: <ApartmentOutlined />, label: '知识点管理' },
   { key: '/api-config', icon: <ApiOutlined />, label: 'API 配置' },
 ];

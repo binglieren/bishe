@@ -11,10 +11,12 @@ import {
 } from 'react-native';
 import { Text, Snackbar, IconButton, Switch, Chip } from 'react-native-paper';
 import { MathText } from '../components/MathText';
+import KpCatalogTree from '../components/KpCatalogTree';
 import { WebView } from 'react-native-webview';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   getGraph,
+  getKpCatalog,
   getKpDetail,
   focusKp,
   unfocusKp,
@@ -39,6 +41,8 @@ const LEVEL_BUCKETS = [
 export default function KnowledgeGraphScreen({ navigation }) {
   const [subject, setSubject] = useState(null);
   const [graph, setGraph] = useState(null);
+  const [catalog, setCatalog] = useState(null);
+  const [viewMode, setViewMode] = useState('catalog'); // 'catalog' | 'graph'
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [snackVisible, setSnackVisible] = useState(false);
@@ -61,13 +65,17 @@ export default function KnowledgeGraphScreen({ navigation }) {
 
   const html = useMemo(() => buildGraphHtml(), []);
 
-  // 加载图谱数据
+  // 加载图谱 + 目录数据
   const loadGraph = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await getGraph(subject);
-      setGraph(res.data || null);
+      const [graphRes, catalogRes] = await Promise.all([
+        getGraph(subject),
+        getKpCatalog(subject),
+      ]);
+      setGraph(graphRes.data || null);
+      setCatalog(catalogRes.data || []);
     } catch (err) {
       setError(err?.message || '加载失败');
     } finally {
@@ -151,7 +159,7 @@ export default function KnowledgeGraphScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      {/* 顶部：科目筛选 + 设置 */}
+      {/* 顶部：科目筛选 + 模式切换 + 设置 */}
       <View style={styles.topBar}>
         <ScrollView
           horizontal
@@ -175,6 +183,23 @@ export default function KnowledgeGraphScreen({ navigation }) {
             );
           })}
         </ScrollView>
+
+        {/* 目录 / 图谱 切换 */}
+        <View style={styles.viewToggle}>
+          <TouchableOpacity
+            onPress={() => setViewMode('catalog')}
+            style={[styles.toggleBtn, viewMode === 'catalog' && styles.toggleBtnActive]}
+          >
+            <RNText style={styles.toggleIcon}>📋</RNText>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setViewMode('graph')}
+            style={[styles.toggleBtn, viewMode === 'graph' && styles.toggleBtnActive]}
+          >
+            <RNText style={styles.toggleIcon}>🗺</RNText>
+          </TouchableOpacity>
+        </View>
+
         <IconButton
           icon="cog-outline"
           size={20}
@@ -183,62 +208,91 @@ export default function KnowledgeGraphScreen({ navigation }) {
         />
       </View>
 
-      {/* 中间：图谱 */}
-      <View style={styles.canvas}>
-        {loading && (
-          <View style={styles.loadingOverlay}>
-            <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={styles.loadingText}>加载知识图谱…</Text>
-          </View>
-        )}
-        {error && !loading && (
-          <View style={styles.loadingOverlay}>
-            <RNText style={{ fontSize: 32, marginBottom: 12 }}>⚠️</RNText>
-            <Text style={styles.loadingText}>{error}</Text>
-            <TouchableOpacity onPress={loadGraph} style={styles.retryBtn}>
-              <Text style={styles.retryText}>重试</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-        <WebView
-          ref={webRef}
-          originWhitelist={['*']}
-          source={{ html }}
-          onMessage={onMessage}
-          style={styles.webview}
-          javaScriptEnabled
-          domStorageEnabled
-          startInLoadingState={false}
-          androidLayerType="hardware"
-          cacheEnabled
-          mixedContentMode="always"
-          scrollEnabled={false}
-          bounces={false}
-          overScrollMode="never"
+      {/* 中间：目录 / 图谱 切换 */}
+      {viewMode === 'catalog' ? (
+        <View style={styles.canvas}>
+          {loading && (
+            <View style={styles.loadingOverlay}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={styles.loadingText}>加载知识目录…</Text>
+            </View>
+          )}
+          {error && !loading && (
+            <View style={styles.loadingOverlay}>
+              <RNText style={{ fontSize: 32, marginBottom: 12 }}>⚠️</RNText>
+              <Text style={styles.loadingText}>{error}</Text>
+              <TouchableOpacity onPress={loadGraph} style={styles.retryBtn}>
+                <Text style={styles.retryText}>重试</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          {!loading && !error && (
+            <ScrollView style={{ flex: 1 }}>
+              <KpCatalogTree nodes={catalog || []} onPressNode={openDetail} />
+            </ScrollView>
+          )}
+        </View>
+      ) : (
+        <View style={styles.canvas}>
+          {loading && (
+            <View style={styles.loadingOverlay}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={styles.loadingText}>加载知识图谱…</Text>
+            </View>
+          )}
+          {error && !loading && (
+            <View style={styles.loadingOverlay}>
+              <RNText style={{ fontSize: 32, marginBottom: 12 }}>⚠️</RNText>
+              <Text style={styles.loadingText}>{error}</Text>
+              <TouchableOpacity onPress={loadGraph} style={styles.retryBtn}>
+                <Text style={styles.retryText}>重试</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          <WebView
+            ref={webRef}
+            originWhitelist={['*']}
+            source={{ html }}
+            onMessage={onMessage}
+            style={styles.webview}
+            javaScriptEnabled
+            domStorageEnabled
+            startInLoadingState={false}
+            androidLayerType="hardware"
+            cacheEnabled
+            mixedContentMode="always"
+            scrollEnabled={false}
+            bounces={false}
+            overScrollMode="never"
         />
       </View>
+      )}
 
-      {/* 底部：统计 + 诊断按钮 */}
-      <View style={styles.bottomBar}>
-        <View style={styles.statsRow}>
-          {LEVEL_BUCKETS.map((b) => (
-            <View key={b.key} style={styles.statChip}>
-              <RNText style={styles.statEmoji}>{b.emoji}</RNText>
-              <Text style={styles.statLabel}>{b.label}</Text>
-              <Text style={[styles.statNum, { color: b.color }]}>{stats[b.key] || 0}</Text>
-            </View>
-          ))}
+      {/* 底部：图谱统计 — 仅图谱模式 */}
+      {viewMode === 'graph' && (
+        <View style={styles.bottomBar}>
+          <View style={styles.statsRow}>
+            {LEVEL_BUCKETS.map((b) => (
+              <View key={b.key} style={styles.statChip}>
+                <RNText style={styles.statEmoji}>{b.emoji}</RNText>
+                <Text style={styles.statLabel}>{b.label}</Text>
+                <Text style={[styles.statNum, { color: b.color }]}>{stats[b.key] || 0}</Text>
+              </View>
+            ))}
+          </View>
+          <TouchableOpacity
+            style={styles.diagnosisBtn}
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('DiagnosisReport', { subject })}
+          >
+            <RNText style={styles.diagnosisIcon}>🩺</RNText>
+            <Text style={styles.diagnosisText}>AI 学习诊断</Text>
+            <RNText style={styles.diagnosisArrow}>›</RNText>
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          style={styles.diagnosisBtn}
-          activeOpacity={0.85}
-          onPress={() => navigation.navigate('DiagnosisReport', { subject })}
-        >
-          <RNText style={styles.diagnosisIcon}>🩺</RNText>
-          <Text style={styles.diagnosisText}>AI 学习诊断</Text>
-          <RNText style={styles.diagnosisArrow}>›</RNText>
-        </TouchableOpacity>
-      </View>
+      )}
+
+      {/* 目录模式 — 底部不额外渲染（进度条已在 KpCatalogTree 内部） */}
 
       {/* 设置面板 */}
       <Modal
@@ -669,4 +723,23 @@ const styles = StyleSheet.create({
     ...shadows.colored,
   },
   practiceText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
+
+  viewToggle: {
+    flexDirection: 'row',
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radii.md,
+    padding: 2,
+    marginRight: 4,
+  },
+  toggleBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.md,
+  },
+  toggleBtnActive: {
+    backgroundColor: colors.primary,
+  },
+  toggleIcon: {
+    fontSize: 14,
+  },
 });
