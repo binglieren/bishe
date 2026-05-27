@@ -10,6 +10,7 @@ import {
   Image,
 } from 'react-native';
 import { Text, Snackbar, IconButton, Switch, Chip } from 'react-native-paper';
+import { MathText } from '../components/MathText';
 import { WebView } from 'react-native-webview';
 import { useFocusEffect } from '@react-navigation/native';
 import {
@@ -410,9 +411,7 @@ function DetailBody({ detail, onToggleFocus, onClose, onPractice }) {
           </Text>
           {detail.wrongQuestions.map((q) => (
             <View key={q.id} style={styles.wrongItem}>
-              <Text numberOfLines={2} style={styles.wrongText}>
-                · {q.content}
-              </Text>
+              <MathText value={`· ${q.content}`} style={styles.wrongText} />
             </View>
           ))}
         </View>

@@ -1,4 +1,4 @@
-package com.example.kaoyan.rag;
+package com.example.kaoyan.service;
 
 import com.example.kaoyan.entity.Document;
 import com.example.kaoyan.entity.KnowledgeBase;
@@ -12,28 +12,23 @@ import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
 import dev.langchain4j.store.embedding.EmbeddingSearchResult;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.*;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
-@RestController
-@RequestMapping("/mcp/rag")
+@Slf4j
+@Service
 @RequiredArgsConstructor
-public class RagMcpTools {
+public class RagService {
 
     private final EmbeddingStore<TextSegment> embeddingStore;
     private final EmbeddingModel embeddingModel;
     private final DocumentRepository docRepo;
     private final KnowledgeBaseRepository kbRepo;
 
-    /** 1. 语义检索文档片段（向量 top-20 → 关键词重排序 → top-5） */
-    @PostMapping("/search")
-    public List<Map<String, Object>> searchKnowledgeBase(@RequestBody Map<String, Object> req) {
-        String query = (String) req.getOrDefault("query", "");
-        Number kbIdNum = (Number) req.get("kbId");
-        Long kbId = kbIdNum != null ? kbIdNum.longValue() : null;
-
+    public List<Map<String, Object>> searchKnowledgeBase(String query, Long kbId) {
         if (query == null || query.isBlank()) return List.of();
 
         Embedding queryVec = embeddingModel.embed(query).content();
@@ -56,8 +51,7 @@ public class RagMcpTools {
         String[] queryWords = query.toLowerCase().split("[\\s，,。！？；：\"'（）\\[\\]《》\\-]+");
 
         List<Map<String, Object>> scored = new ArrayList<>();
-        for (int i = 0; i < matches.size(); i++) {
-            EmbeddingMatch<TextSegment> match = matches.get(i);
+        for (EmbeddingMatch<TextSegment> match : matches) {
             TextSegment seg = match.embedded();
             String docIdStr = seg.metadata().getString("document_id");
 
@@ -83,10 +77,7 @@ public class RagMcpTools {
         return scored.size() > 5 ? scored.subList(0, 5) : scored;
     }
 
-    /** 2. 列出用户知识库 */
-    @PostMapping("/list-kb")
-    public List<Map<String, Object>> listKnowledgeBases(@RequestBody Map<String, Object> req) {
-        Long userId = toLong(req.get("userId"));
+    public List<Map<String, Object>> listKnowledgeBases(Long userId) {
         if (userId == null) return List.of();
 
         return kbRepo.findByUserIdOrderByCreatedAtAsc(userId).stream().map(kb -> {
@@ -98,10 +89,7 @@ public class RagMcpTools {
         }).collect(Collectors.toList());
     }
 
-    /** 3. 文档详情 */
-    @PostMapping("/doc-info")
-    public Map<String, Object> getDocumentInfo(@RequestBody Map<String, Object> req) {
-        Long docId = toLong(req.get("docId"));
+    public Map<String, Object> getDocumentInfo(Long docId) {
         if (docId == null) return Map.of("error", "docId required");
 
         Document doc = docRepo.findById(docId).orElse(null);
@@ -115,13 +103,5 @@ public class RagMcpTools {
         info.put("status", doc.getStatus());
         info.put("enabled", doc.getEnabled());
         return info;
-    }
-
-    private static Long toLong(Object v) {
-        if (v instanceof Number n) return n.longValue();
-        if (v instanceof String s) {
-            try { return Long.parseLong(s); } catch (NumberFormatException e) {}
-        }
-        return null;
     }
 }

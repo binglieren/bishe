@@ -54,7 +54,7 @@ public class DocumentProcessor {
     private static final int MAX_PAGE_HEIGHT = 1500;
     private static final int PAGES_PER_BATCH = 15;
     private static final int TEXT_THRESHOLD = 500;  // 低于500字视为扫描版PDF，启动OCR
-    private final DocumentSplitter splitter = DocumentSplitters.recursive(500, 50);
+    private final DocumentSplitter splitter = DocumentSplitters.recursive(800, 200);
 
     @Async
     public void processAsync(Document document, String filePath) {
@@ -172,14 +172,8 @@ public class DocumentProcessor {
                   + (startPage + 1) + "-" + endPage + " of " + totalPages
                   + "). Output only the text, one page after another, separated by '--- Page N ---'. No explanations.";
 
-        List<Map<String, Object>> contentParts = new ArrayList<>();
-        contentParts.add(Map.of("type", "text", "text", prompt));
-        for (String img : pageImages) {
-            contentParts.add(Map.of("type", "image_url", "image_url",
-                    Map.of("url", "data:image/jpeg;base64," + img)));
-        }
         try {
-            return llmService.chatMultimodal(List.of(Map.of("role", "user", "content", contentParts)), userId);
+            return llmService.ocrImage(pageImages, prompt, userId);
         } catch (Exception e) { log.error("OCR 批次 {}-{} 失败", startPage + 1, endPage, e); return null; }
     }
 

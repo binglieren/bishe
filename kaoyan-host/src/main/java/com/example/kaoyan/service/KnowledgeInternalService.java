@@ -1,4 +1,4 @@
-package com.example.kaoyan.knowledge;
+package com.example.kaoyan.service;
 
 import com.example.kaoyan.entity.KnowledgeMastery;
 import com.example.kaoyan.entity.KnowledgePoint;
@@ -6,33 +6,21 @@ import com.example.kaoyan.repository.KnowledgeMasteryRepository;
 import com.example.kaoyan.repository.KnowledgePointRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Slf4j
-@RestController
-@RequestMapping("/mcp/knowledge")
+@Service
 @RequiredArgsConstructor
-public class KnowledgeMcpTools {
+public class KnowledgeInternalService {
 
     private final KnowledgePointRepository knowledgePointRepository;
     private final KnowledgeMasteryRepository knowledgeMasteryRepository;
-    private final WebClient.Builder webClientBuilder;
 
-    @PostMapping("/tree")
-    public List<Map<String, Object>> getKnowledgePointTree(@RequestBody Map<String, Object> request) {
-        String subject = (String) request.get("subject");
+    public List<Map<String, Object>> getKnowledgePointTree(String subject) {
         List<KnowledgePoint> allPoints;
         if (subject != null && !subject.isEmpty()) {
             allPoints = knowledgePointRepository.findBySubject(subject);
@@ -58,11 +46,7 @@ public class KnowledgeMcpTools {
                 .collect(Collectors.toList());
     }
 
-    @PostMapping("/detail")
-    public Map<String, Object> getKpDetail(@RequestBody Map<String, Object> request) {
-        Long kpId = ((Number) request.get("kpId")).longValue();
-        Long userId = request.get("userId") != null ? ((Number) request.get("userId")).longValue() : null;
-
+    public Map<String, Object> getKpDetail(Long kpId, Long userId) {
         KnowledgePoint kp = knowledgePointRepository.findById(kpId)
                 .orElseThrow(() -> new RuntimeException("Knowledge point not found: " + kpId));
 
@@ -107,14 +91,12 @@ public class KnowledgeMcpTools {
         return result;
     }
 
-    @PostMapping("/weak")
-    public List<Map<String, Object>> getWeakPoints(@RequestBody Map<String, Object> request) {
-        Long userId = ((Number) request.get("userId")).longValue();
-        BigDecimal threshold = request.get("threshold") != null
-                ? new BigDecimal(request.get("threshold").toString())
+    public List<Map<String, Object>> getWeakPoints(Long userId, Double threshold) {
+        BigDecimal thr = threshold != null
+                ? BigDecimal.valueOf(threshold)
                 : new BigDecimal("0.6");
 
-        List<KnowledgeMastery> weakPoints = knowledgeMasteryRepository.findWeakPoints(userId, threshold);
+        List<KnowledgeMastery> weakPoints = knowledgeMasteryRepository.findWeakPoints(userId, thr);
 
         return weakPoints.stream().map(wp -> {
             Map<String, Object> map = new LinkedHashMap<>();
@@ -129,14 +111,11 @@ public class KnowledgeMcpTools {
         }).collect(Collectors.toList());
     }
 
-    @PostMapping("/diagnose")
-    public Map<String, Object> diagnoseLearning(@RequestBody Map<String, Object> request) {
-        Long userId = ((Number) request.get("userId")).longValue();
-
+    public Map<String, Object> diagnoseLearning(Long userId) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("status", "pending");
         result.put("userId", userId);
-        result.put("message", "Learning diagnosis via LLM is not yet implemented. This endpoint will analyze the user's mastery data and provide personalized recommendations.");
+        result.put("message", "Learning diagnosis via LLM is not yet implemented.");
         return result;
     }
 }

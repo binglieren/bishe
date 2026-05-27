@@ -59,6 +59,9 @@ llm:
   api-url: ${LLM_API_URL:https://api.deepseek.com}
   model: ${LLM_MODEL:deepseek-v4-pro}
 
+  # ── ocr：Qwen-VL-OCR (DashScope 原生 API) ──
+  ocr-model: ${LLM_OCR_MODEL:qwen-vl-ocr-latest}
+
   # ── ② multimodal：Qwen-VL (DashScope OpenAI 兼容) ──
   # 支持图片输入，用于拍照搜题、题目结构化
   multimodal-model: ${LLM_MULTIMODAL_MODEL:qwen-vl-ocr}

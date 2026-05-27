@@ -26,9 +26,6 @@
     <modules>
         <module>kaoyan-common</module>
         <module>kaoyan-host</module>
-        <module>kaoyan-rag-server</module>
-        <module>kaoyan-question-server</module>
-        <module>kaoyan-knowledge-server</module>
     </modules>
 
     <dependencyManagement>

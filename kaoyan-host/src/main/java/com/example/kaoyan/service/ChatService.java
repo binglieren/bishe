@@ -470,10 +470,9 @@ public class ChatService {
             EmbeddingSearchResult<TextSegment> searchResult = embeddingStore.search(
                     EmbeddingSearchRequest.builder()
                             .queryEmbedding(queryEmbedding)
-                            .maxResults(30)
+                            .maxResults(80)
                             .build());
-
-            // 按 metadata 过滤
+            // 按 metadata 过滤 + 最低相关性阈值
             List<EmbeddingMatch<TextSegment>> filtered = searchResult.matches().stream()
                     .filter(m -> m.embedded() != null && m.embedded().metadata() != null)
                     .filter(m -> kbIdSet.contains(m.embedded().metadata().getString("kb_id")))
@@ -482,7 +481,7 @@ public class ChatService {
 
             if (filtered.isEmpty()) return "";
 
-            // 邻chunk扩展：为每个匹配块带入前后各1个相邻块
+            // 邻chunk扩展：top-10 各带前后 ±2 相邻块（宽窗口）
             Set<String> expandedIds = new HashSet<>();
             Map<String, Map<Integer, EmbeddingMatch<TextSegment>>> docIndex = new LinkedHashMap<>();
             for (EmbeddingMatch<TextSegment> m : filtered) {
@@ -490,12 +489,12 @@ public class ChatService {
                 int idx = Integer.parseInt(m.embedded().metadata().getString("chunk_index"));
                 docIndex.computeIfAbsent(docId, k -> new LinkedHashMap<>()).put(idx, m);
             }
-            for (EmbeddingMatch<TextSegment> best : filtered.subList(0, Math.min(6, filtered.size()))) {
+            for (EmbeddingMatch<TextSegment> best : filtered.subList(0, Math.min(10, filtered.size()))) {
                 String docId = best.embedded().metadata().getString("document_id");
                 int idx = Integer.parseInt(best.embedded().metadata().getString("chunk_index"));
                 Map<Integer, EmbeddingMatch<TextSegment>> neighbors = docIndex.get(docId);
                 if (neighbors != null) {
-                    for (int offset = -1; offset <= 1; offset++) {
+                    for (int offset = -2; offset <= 2; offset++) {
                         if (neighbors.containsKey(idx + offset)) {
                             expandedIds.add(docId + ":" + (idx + offset));
                         }
@@ -555,8 +554,7 @@ public class ChatService {
                     ctx.append("> **[知识库「").append(kbName).append("」]《").append(docName).append("》#").append(chunkIdx + 1);
                     ctx.append(" 相关度: ").append((int) Math.round(score * 100)).append("%");
                     ctx.append("**\n>\n");
-                    String trimmed = content.length() > 500 ? content.substring(0, 500) + "…" : content;
-                    ctx.append("> ").append(trimmed.replace("\n", "\n> ")).append("\n>\n");
+                    ctx.append("> ").append(content.replace("\n", "\n> ")).append("\n>\n");
                     totalShown++;
                 }
                 if (totalShown >= 10) break;
@@ -625,18 +623,22 @@ public class ChatService {
         // 1. 解析系统 Prompt（F1：会话级覆盖）
         String systemPrompt = resolveSystemPrompt(userId, sessionId);
 
-        // 2. RAG 检索（F2 + F4）LangChain4j — 含邻chunk扩展
+        // 2. 加载对话历史（用于 RAG 查询增强）
+        List<ChatMessage> histList = chatMessageRepository.findTop10BySessionIdOrderByCreatedAtDesc(sessionId);
+        Collections.reverse(histList);
+
+        // 3. RAG 检索（F2 + F4）LangChain4j — 含邻chunk扩展
         List<SessionKbBinding> bindings = sessionKbBindingRepository.findBySessionId(sessionId);
         if (!bindings.isEmpty()) {
             try {
                 Set<String> kbIdSet = bindings.stream()
                         .map(b -> String.valueOf(b.getKbId()))
                         .collect(Collectors.toSet());
-                Embedding queryEmbedding = embeddingModel.embed(userMessage).content();
+                Embedding queryEmbedding = embeddingModel.embed(buildQueryText(userMessage, histList, userMsgId)).content();
                 EmbeddingSearchResult<TextSegment> sr = embeddingStore.search(
                         EmbeddingSearchRequest.builder()
                                 .queryEmbedding(queryEmbedding)
-                                .maxResults(50)
+                                .maxResults(80)
                                 .build());
 
                 List<EmbeddingMatch<TextSegment>> filtered = sr.matches().stream()
@@ -646,7 +648,7 @@ public class ChatService {
                         .toList();
 
                 if (!filtered.isEmpty()) {
-                    // 邻chunk扩展
+                    // 邻chunk扩展：top-10 各带前后 ±2 相邻块（宽窗口）
                     Set<String> expandedIds = new HashSet<>();
                     Map<String, Map<Integer, EmbeddingMatch<TextSegment>>> docIndex = new LinkedHashMap<>();
                     for (var m : filtered) {
@@ -654,12 +656,12 @@ public class ChatService {
                         int idx = Integer.parseInt(m.embedded().metadata().getString("chunk_index"));
                         docIndex.computeIfAbsent(docId, k -> new LinkedHashMap<>()).put(idx, m);
                     }
-                    for (var best : filtered.subList(0, Math.min(5, filtered.size()))) {
+                    for (var best : filtered.subList(0, Math.min(10, filtered.size()))) {
                         String docId = best.embedded().metadata().getString("document_id");
                         int idx = Integer.parseInt(best.embedded().metadata().getString("chunk_index"));
                         var neighbors = docIndex.get(docId);
                         if (neighbors != null) {
-                            for (int offset = -1; offset <= 1; offset++) {
+                            for (int offset = -2; offset <= 2; offset++) {
                                 if (neighbors.containsKey(idx + offset)) expandedIds.add(docId + ":" + (idx + offset));
                             }
                         }
@@ -682,7 +684,7 @@ public class ChatService {
                         String docName = seg.metadata().getString("filename");
                         int chunkIdx = Integer.parseInt(seg.metadata().getString("chunk_index"));
                         ctx.append("\n> [").append(kbName).append("]《").append(docName).append("》#").append(chunkIdx + 1);
-                        ctx.append(" ").append(seg.text().length() > 300 ? seg.text().substring(0, 300) + "…" : seg.text());
+                        ctx.append(" ").append(seg.text());
                     }
                     systemPrompt += ctx.toString();
                 }
@@ -693,9 +695,7 @@ public class ChatService {
 
         messages.add(Map.of("role", "system", "content", systemPrompt));
 
-        // 3. 注入对话历史（最近10条），含 reasoning_content
-        List<ChatMessage> histList = chatMessageRepository.findTop10BySessionIdOrderByCreatedAtDesc(sessionId);
-        Collections.reverse(histList);
+        // 4. 注入对话历史（最近10条），含 reasoning_content
         for (ChatMessage hm : histList) {
             if (hm.getId().equals(userMsgId)) continue;
             String content = hm.getContent() != null ? hm.getContent() : "";

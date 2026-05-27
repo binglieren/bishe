@@ -1,4 +1,4 @@
-package com.example.kaoyan.question;
+package com.example.kaoyan.service;
 
 import com.example.kaoyan.entity.KnowledgePoint;
 import com.example.kaoyan.entity.Question;
@@ -10,66 +10,31 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Slf4j
-@RestController
-@RequestMapping("/mcp/question")
+@Service
 @RequiredArgsConstructor
-public class QuestionMcpTools {
+public class QuestionInternalService {
 
     private final QuestionRepository questionRepository;
     private final KnowledgePointRepository knowledgePointRepository;
     private final UserQuestionRepository userQuestionRepository;
-    private final WebClient.Builder webClientBuilder;
 
     @PersistenceContext
     private EntityManager em;
 
-    @PostMapping("/search")
-    public List<Map<String, Object>> searchQuestionBank(@RequestBody Map<String, Object> request) {
-        String subject = (String) request.get("subject");
-        String type = (String) request.get("type");
-        Integer difficulty = null;
-        if (request.get("difficulty") != null) {
-            difficulty = ((Number) request.get("difficulty")).intValue();
-        }
-        Long kpId = null;
-        Object kpObj = request.get("kp");
-        if (kpObj != null) {
-            if (kpObj instanceof Number) {
-                kpId = ((Number) kpObj).longValue();
-            } else {
-                try {
-                    kpId = Long.parseLong(kpObj.toString());
-                } catch (NumberFormatException e) {
-                    log.warn("Invalid kp value: {}", kpObj);
-                }
-            }
-        }
+    public List<Map<String, Object>> searchQuestions(
+            String subject, String type, Integer difficulty, Long kpId) {
 
         List<Question> questions = questionRepository.searchQuestions(subject, type, difficulty, kpId);
         return questions.stream().map(this::toSummary).collect(Collectors.toList());
     }
 
-    @PostMapping("/recommend")
-    public List<Map<String, Object>> recommendQuestions(@RequestBody Map<String, Object> request) {
-        Long userId = ((Number) request.get("userId")).longValue();
-        int count = request.get("count") != null ? ((Number) request.get("count")).intValue() : 10;
-
+    public List<Map<String, Object>> recommendQuestions(Long userId, int count) {
         List<KnowledgePoint> kps = knowledgePointRepository.findKnowledgePointsByUserId(userId);
         List<Question> result = new ArrayList<>();
 
@@ -99,13 +64,11 @@ public class QuestionMcpTools {
         return result.stream().map(this::toSummary).collect(Collectors.toList());
     }
 
-    @PostMapping("/similar")
-    public List<Map<String, Object>> getSimilarQuestions(@RequestBody Map<String, Object> request) {
-        Long questionId = ((Number) request.get("questionId")).longValue();
-
+    public List<Map<String, Object>> getSimilarQuestions(Long questionId) {
         String vectorStr = null;
         try {
-            vectorStr = (String) em.createNativeQuery("SELECT embedding::text FROM question WHERE id = :id")
+            vectorStr = (String) em.createNativeQuery(
+                    "SELECT embedding::text FROM question WHERE id = :id")
                     .setParameter("id", questionId)
                     .getSingleResult();
         } catch (Exception e) {
@@ -117,7 +80,6 @@ public class QuestionMcpTools {
             return similar.stream().map(this::toSummary).collect(Collectors.toList());
         }
 
-        // Fallback: same knowledge point
         Question q = questionRepository.findById(questionId).orElse(null);
         if (q != null && q.getKnowledgePointId() != null) {
             List<Question> similar = questionRepository.findByKnowledgePointIdAndIdNot(
@@ -129,14 +91,10 @@ public class QuestionMcpTools {
         return Collections.emptyList();
     }
 
-    @PostMapping("/extract")
-    public Map<String, Object> extractQuestionFromAnswer(@RequestBody Map<String, Object> request) {
-        String answerText = (String) request.get("answerText");
-        Long userId = request.get("userId") != null ? ((Number) request.get("userId")).longValue() : null;
-
+    public Map<String, Object> extractQuestionFromAnswer(String answerText, Long userId) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("status", "pending");
-        result.put("message", "LLM extraction is not yet implemented. This endpoint will use the host LLM service to extract question information from answer text.");
+        result.put("message", "LLM extraction is not yet implemented.");
         result.put("answerText", answerText);
         result.put("userId", userId);
         return result;

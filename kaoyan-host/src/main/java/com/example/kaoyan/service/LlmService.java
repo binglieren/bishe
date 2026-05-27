@@ -6,6 +6,7 @@ import com.example.kaoyan.repository.AiConfigRepository;
 import com.example.kaoyan.util.AgentDebugLog;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -20,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class LlmService {
@@ -44,6 +46,9 @@ public class LlmService {
 
     @Value("${llm.embedding-api-url:}")
     private String defaultEmbeddingApiUrl;
+
+    @Value("${llm.ocr-model:qwen-vl-ocr-latest}")
+    private String ocrModel;
 
     @Value("${llm.embedding-api-key:}")
     private String defaultEmbeddingApiKey;
@@ -745,6 +750,67 @@ public class LlmService {
         messages.add(Map.of("role", "user", "content", contentParts));
 
         return chatMultimodal(messages, userId);
+    }
+
+    /**
+     * 文档 OCR（使用 qwen-vl-ocr 原生 API，非 OpenAI 兼容接口）。
+     * DashScope 原生 API 支持 min_pixels / max_pixels 等精细参数，适合文档级 OCR。
+     *
+     * @param base64Images 图片 base64 列表（不含 data: 前缀）
+     * @param prompt       OCR 指令
+     * @param userId       用户 id（用于解析 API key）
+     * @return 识别出的文本
+     */
+    public String ocrImage(List<String> base64Images, String prompt, Long userId) {
+        String key = resolveApiKey(userId, SystemApiConfigService.STAGE_MULTIMODAL);
+
+        List<Map<String, Object>> content = new ArrayList<>();
+        for (String img : base64Images) {
+            content.add(Map.of("image", "data:image/jpeg;base64," + img));
+        }
+        content.add(Map.of("text", prompt));
+
+        Map<String, Object> message = Map.of("role", "user", "content", content);
+
+        Map<String, Object> input = Map.of("messages", List.of(message));
+
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("model", ocrModel);
+        requestBody.put("input", input);
+
+        WebClient client = webClientBuilder
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(50 * 1024 * 1024))
+                .baseUrl("https://dashscope.aliyuncs.com/api/v1")
+                .build();
+
+        try {
+            Map response = client.post()
+                    .uri("/services/aigc/multimodal-generation/generation")
+                    .header("Authorization", "Bearer " + key)
+                    .header("Content-Type", "application/json")
+                    .bodyValue(requestBody)
+                    .retrieve()
+                    .bodyToMono(Map.class)
+                    .block(java.time.Duration.ofMinutes(3));
+
+            Map<String, Object> output = (Map<String, Object>) response.get("output");
+            if (output == null) {
+                throw new RuntimeException("OCR 响应无 output");
+            }
+            List<Map<String, Object>> choices = (List<Map<String, Object>>) output.get("choices");
+            if (choices == null || choices.isEmpty()) {
+                throw new RuntimeException("OCR 响应无 choices");
+            }
+            Map<String, Object> msg = (Map<String, Object>) choices.get(0).get("message");
+            List<Map<String, Object>> respContent = (List<Map<String, Object>>) msg.get("content");
+            if (respContent == null || respContent.isEmpty()) {
+                return "";
+            }
+            return (String) respContent.get(0).getOrDefault("text", "");
+        } catch (Exception e) {
+            log.error("OCR 调用失败: {}", e.getMessage());
+            throw e;
+        }
     }
 
     /**
