@@ -15,6 +15,7 @@ import reactor.core.publisher.Flux;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -719,5 +720,85 @@ public class LlmService {
             return CosyVoiceService.mimeType();
         }
         return "audio/wav";
+    }
+
+    // ===================== 简答题批改 =====================
+
+    private final ObjectMapper evaluationObjectMapper = new ObjectMapper()
+            .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+    /**
+     * 识别手写图片中的文字（多模态 OCR）
+     * @return 识别到的文字，无法识别时返回 "[无法识别]"
+     */
+    public String transcribeHandwriting(String imageBase64, Long userId) {
+        String systemPrompt = "你是一个手写文字识别助手。请识别图片中的手写文字并原样输出，不要添加任何解释或额外内容。如果图片中无文字或完全无法辨认，输出 [无法识别]。";
+        String userPrompt = "请识别以下图片中的手写文字：";
+
+        List<Map<String, Object>> messages = new ArrayList<>();
+        messages.add(Map.of("role", "system", "content", systemPrompt));
+
+        List<Map<String, Object>> contentParts = new ArrayList<>();
+        contentParts.add(Map.of("type", "text", "text", userPrompt));
+        contentParts.add(Map.of("type", "image_url", "image_url",
+                Map.of("url", "data:image/jpeg;base64," + imageBase64)));
+        messages.add(Map.of("role", "user", "content", contentParts));
+
+        return chatMultimodal(messages, userId);
+    }
+
+    /**
+     * 评判学生简答题答案（文本对话模型做判定）
+     *
+     * @param questionContent  题目正文
+     * @param referenceAnswer  参考答案
+     * @param studentAnswer    学生作答文本（手写 OCR 后的文字）
+     * @param extraText        学生额外输入的文字（可为 null）
+     * @param userId           用户 id
+     * @return {isCorrect, score, feedback}
+     */
+    public Map<String, Object> evaluateShortAnswer(String questionContent, String referenceAnswer,
+                                                    String studentAnswer, String extraText, Long userId) {
+        String systemPrompt = "你是一位考研辅导批改老师。请根据题目和参考答案，评判学生答案的正确性。";
+
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("【题目】\n").append(questionContent).append("\n\n");
+        prompt.append("【参考答案 / 评分标准】\n").append(referenceAnswer).append("\n\n");
+        prompt.append("【学生答案】\n").append(studentAnswer != null ? studentAnswer : "");
+        if (extraText != null && !extraText.isBlank()) {
+            prompt.append("\n\n【学生文字补充】\n").append(extraText);
+        }
+        prompt.append("\n\n请评判答案要点覆盖度和正确性。\n");
+        prompt.append("评分标准：\n");
+        prompt.append("- 答案要点完全正确：isCorrect=true, score=90-100\n");
+        prompt.append("- 答案部分正确但有关键遗漏：isCorrect=true, score=60-89\n");
+        prompt.append("- 答案基本错误或离题：isCorrect=false, score=0-59\n");
+        prompt.append("- 无法辨认或与题目无关：isCorrect=false, score=0\n\n");
+        prompt.append("请严格返回 JSON（不要 markdown 包裹）：\n");
+        prompt.append("{\"isCorrect\": true/false, \"score\": 0-100, \"feedback\": \"详细评语\"}");
+
+        List<Map<String, String>> messages = new ArrayList<>();
+        messages.add(Map.of("role", "system", "content", systemPrompt));
+        messages.add(Map.of("role", "user", "content", prompt.toString()));
+
+        String rawResponse = chat(messages, userId);
+
+        String json = rawResponse
+                .replaceAll("(?s)```json\\s*", "")
+                .replaceAll("(?s)```\\s*", "")
+                .trim();
+
+        Map<String, Object> result = new HashMap<>();
+        try {
+            Map<String, Object> parsed = evaluationObjectMapper.readValue(json, Map.class);
+            result.put("isCorrect", parsed.get("isCorrect"));
+            result.put("score", parsed.get("score"));
+            result.put("feedback", parsed.get("feedback"));
+        } catch (Exception e) {
+            result.put("isCorrect", false);
+            result.put("score", 0);
+            result.put("feedback", "LLM 判定异常，请重试");
+        }
+        return result;
     }
 }

@@ -1,6 +1,7 @@
 package com.example.kaoyan.service;
 
 import com.example.kaoyan.dto.AnswerRequest;
+import com.example.kaoyan.dto.ImageAnswerRequest;
 import com.example.kaoyan.dto.QuestionDTO;
 import com.example.kaoyan.entity.*;
 import com.example.kaoyan.repository.*;
@@ -10,6 +11,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.AbstractMap;
@@ -32,6 +34,8 @@ public class QuestionService {
     private final KnowledgeMasteryRepository knowledgeMasteryRepository;
     private final UserQuestionRepository userQuestionRepository;
     private final com.example.kaoyan.repository.QuestionKnowledgePointRepository questionKnowledgePointRepository;
+    private final LlmService llmService;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * 创建题目
@@ -106,6 +110,15 @@ public class QuestionService {
     public Map<String, Object> submitAnswer(Long userId, AnswerRequest request) {
         Question question = questionRepository.findById(request.getQuestionId())
                 .orElseThrow(() -> new IllegalArgumentException("题目不存在"));
+
+        if ("__viewed__".equals(request.getUserAnswer())) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("isCorrect", true);
+            result.put("correctAnswer", question.getAnswer());
+            result.put("analysis", question.getAnalysis());
+            result.put("viewed", true);
+            return result;
+        }
 
         boolean isCorrect = checkAnswer(question, request.getUserAnswer());
 
@@ -196,7 +209,11 @@ public class QuestionService {
     @Transactional
     public Map<String, Object> recordAttemptForUserQuestion(Long userId, AnswerRequest request) {
         Map<String, Object> result = submitAnswer(userId, request);
-        // 不存在则创建（允许从推荐列表练习时自动加入用户题库）
+
+        if (Boolean.TRUE.equals(result.get("viewed"))) {
+            return result;
+        }
+
         UserQuestion uq = userQuestionRepository.findByUserIdAndQuestionId(userId, request.getQuestionId())
                 .orElseGet(() -> {
                     UserQuestion nu = new UserQuestion();
@@ -364,5 +381,79 @@ public class QuestionService {
                         .multiply(new java.math.BigDecimal(100))
         );
         knowledgeMasteryRepository.save(mastery);
+    }
+
+    /**
+     * 简答题提交手写图片答案，经 LLM 判定对错
+     */
+    public Map<String, Object> submitImageAnswer(Long userId, ImageAnswerRequest request) {
+        Question question = questionRepository.findById(request.getQuestionId())
+                .orElseThrow(() -> new IllegalArgumentException("题目不存在"));
+
+        String transcribed = null;
+        Map<String, Object> evaluation;
+
+        try {
+            if (request.getImageBase64() != null && !request.getImageBase64().isBlank()) {
+                transcribed = llmService.transcribeHandwriting(request.getImageBase64(), userId);
+                transcribed = transcribed != null ? transcribed.trim() : "";
+            } else {
+                transcribed = request.getUserAnswer() != null ? request.getUserAnswer() : "";
+            }
+
+            if (transcribed.isEmpty() || "[无法识别]".equals(transcribed)) {
+                evaluation = new HashMap<>();
+                evaluation.put("isCorrect", false);
+                evaluation.put("score", 0);
+                evaluation.put("feedback", "未能识别手写内容，请确认图片清晰并重新上传");
+            } else {
+                evaluation = llmService.evaluateShortAnswer(
+                        question.getContent(), question.getAnswer(), transcribed,
+                        request.getUserAnswer(), userId);
+            }
+        } catch (Exception e) {
+            evaluation = new HashMap<>();
+            evaluation.put("isCorrect", false);
+            evaluation.put("score", 0);
+            evaluation.put("feedback", "LLM 判定服务暂不可用，请稍后重试");
+        }
+
+        final String finalTranscribed = transcribed;
+        final boolean isCorrect = Boolean.TRUE.equals(evaluation.get("isCorrect"));
+
+        transactionTemplate.executeWithoutResult(status -> {
+            if (!isCorrect && !wrongAnswerRepository.existsByUserIdAndQuestionId(userId, question.getId())) {
+                WrongAnswerRecord record = new WrongAnswerRecord();
+                record.setUserId(userId);
+                record.setQuestionId(question.getId());
+                record.setUserAnswer(finalTranscribed != null ? finalTranscribed : "");
+                wrongAnswerRepository.save(record);
+            }
+
+            if (question.getKnowledgePointId() != null) {
+                updateMastery(userId, question.getKnowledgePointId(), isCorrect);
+            }
+
+            UserQuestion uq = userQuestionRepository.findByUserIdAndQuestionId(userId, question.getId())
+                    .orElseGet(() -> {
+                        UserQuestion nu = new UserQuestion();
+                        nu.setUserId(userId);
+                        nu.setQuestionId(question.getId());
+                        nu.setCorrectCount(0);
+                        nu.setTotalAttempts(0);
+                        return nu;
+                    });
+            uq.setTotalAttempts((uq.getTotalAttempts() == null ? 0 : uq.getTotalAttempts()) + 1);
+            if (isCorrect) {
+                uq.setCorrectCount((uq.getCorrectCount() == null ? 0 : uq.getCorrectCount()) + 1);
+            }
+            uq.setLastAttemptAt(LocalDateTime.now());
+            userQuestionRepository.save(uq);
+        });
+
+        Map<String, Object> result = new HashMap<>(evaluation);
+        result.put("correctAnswer", question.getAnswer());
+        result.put("analysis", question.getAnalysis());
+        return result;
     }
 }

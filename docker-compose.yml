@@ -4,18 +4,18 @@
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg17
     container_name: kaoyan-db
     environment:
       POSTGRES_DB: kaoyan
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-123456}
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -23,10 +23,15 @@ services:
   redis:
     image: redis:7-alpine
     container_name: kaoyan-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
     ports:
-      - "6379:6379"
+      - "6380:6379"
+    volumes:
+      - redisdata:/data
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -39,21 +44,40 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/kaoyan
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-123456}
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
       SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
       MCP_RAG_URL: http://rag:8091
       MCP_QUESTION_URL: http://question:8092
       MCP_KNOWLEDGE_URL: http://knowledge:8093
-      LLM_API_KEY: ${LLM_API_KEY:-sk-e55e0a57fff842eb8386f6042467cfc4}
+      DB_HOST: postgres
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      LLM_API_KEY: ${LLM_API_KEY}
       LLM_API_URL: ${LLM_API_URL:-https://api.deepseek.com}
       LLM_MODEL: ${LLM_MODEL:-deepseek-v4-pro}
+      LLM_EMBEDDING_API_KEY: ${LLM_EMBEDDING_API_KEY}
       LLM_EMBEDDING_API_URL: ${LLM_EMBEDDING_API_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-      LLM_EMBEDDING_API_KEY: ${LLM_EMBEDDING_API_KEY:-sk-0f77a6941aff43bab6b8d21db90134bf}
+      LLM_EMBEDDING_MODEL: ${LLM_EMBEDDING_MODEL:-text-embedding-v4}
+      LLM_MULTIMODAL_API_KEY: ${LLM_MULTIMODAL_API_KEY}
       LLM_MULTIMODAL_API_URL: ${LLM_MULTIMODAL_API_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-      LLM_MULTIMODAL_API_KEY: ${LLM_MULTIMODAL_API_KEY:-sk-0f77a6941aff43bab6b8d21db90134bf}
+      LLM_MULTIMODAL_MODEL: ${LLM_MULTIMODAL_MODEL:-qwen-vl-ocr}
+      LLM_AUDIO_API_KEY: ${LLM_AUDIO_API_KEY}
+      LLM_AUDIO_API_URL: ${LLM_AUDIO_API_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      LLM_AUDIO_MODEL: ${LLM_AUDIO_MODEL:-qwen3-omni-flash}
+      LLM_TTS_API_KEY: ${LLM_TTS_API_KEY}
+      LLM_TTS_API_URL: ${LLM_TTS_API_URL:-https://dashscope.aliyuncs.com/api/v1}
+      LLM_TTS_MODEL: ${LLM_TTS_MODEL:-cosyvoice-v3.5-flash}
       FILE_UPLOAD_DIR: ${FILE_UPLOAD_DIR:-./uploads}
 
   rag:
@@ -66,10 +90,14 @@ services:
         condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/kaoyan
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-123456}
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: postgres
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
+      LLM_EMBEDDING_API_KEY: ${LLM_EMBEDDING_API_KEY}
       LLM_EMBEDDING_API_URL: ${LLM_EMBEDDING_API_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-      LLM_EMBEDDING_API_KEY: ${LLM_EMBEDDING_API_KEY:-sk-0f77a6941aff43bab6b8d21db90134bf}
+      LLM_EMBEDDING_MODEL: ${LLM_EMBEDDING_MODEL:-text-embedding-v4}
 
   question:
     build: ./kaoyan-question-server
@@ -81,8 +109,11 @@ services:
         condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/kaoyan
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-123456}
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: postgres
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
 
   knowledge:
     build: ./kaoyan-knowledge-server
@@ -94,8 +125,12 @@ services:
         condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/kaoyan
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-123456}
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: postgres
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
 
 volumes:
   pgdata:
+  redisdata:

@@ -6,15 +6,15 @@ server:
 
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/kaoyan
-    username: postgres
-    password: 123456
+    url: jdbc:postgresql://${DB_HOST:localhost}:5432/kaoyan
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: ${JPA_SHOW_SQL:false}
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
@@ -22,8 +22,9 @@ spring:
 
   data:
     redis:
-      host: localhost
+      host: ${REDIS_HOST:localhost}
       port: 6379
+      password: ${REDIS_PASSWORD:}
 
   servlet:
     multipart:
@@ -38,7 +39,7 @@ spring:
 
 # JWT 配置
 jwt:
-  secret: your-256-bit-secret-key-here-change-in-production-environment
+  secret: ${JWT_SECRET}
   expiration: 86400000  # 24小时（毫秒）
 
 # LLM API 配置（系统默认；管理员可在 admin 后台「API 配置」页按 stage 独立配置）
@@ -54,35 +55,35 @@ jwt:
 llm:
   # ── ① chat：DeepSeek-V3 官方模型 ──
   # 适用：AI 答疑文本路径、对话标题生成、题目知识点打标
-  api-key: sk-e55e0a57fff842eb8386f6042467cfc4
-  api-url: https://api.deepseek.com
-  model: deepseek-v4-pro
+  api-key: ${LLM_API_KEY}
+  api-url: ${LLM_API_URL:https://api.deepseek.com}
+  model: ${LLM_MODEL:deepseek-v4-pro}
 
   # ── ② multimodal：Qwen-VL (DashScope OpenAI 兼容) ──
   # 支持图片输入，用于拍照搜题、题目结构化
-  multimodal-model: qwen-vl-ocr
-  multimodal-api-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-  multimodal-api-key: sk-0f77a6941aff43bab6b8d21db90134bf
+  multimodal-model: ${LLM_MULTIMODAL_MODEL:qwen-vl-ocr}
+  multimodal-api-url: ${LLM_MULTIMODAL_API_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+  multimodal-api-key: ${LLM_MULTIMODAL_API_KEY}
 
   # ── ③ embedding：通义千问 text-embedding-v4 (DashScope OpenAI 兼容) ──
   # 支持 dimensions = 64/128/256/512/768/1024/1536/2048；DB 列固定 1536，自动请求该维度
-  embedding-model: text-embedding-v4
-  embedding-api-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-  embedding-api-key: sk-0f77a6941aff43bab6b8d21db90134bf
+  embedding-model: ${LLM_EMBEDDING_MODEL:text-embedding-v4}
+  embedding-api-url: ${LLM_EMBEDDING_API_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+  embedding-api-key: ${LLM_EMBEDDING_API_KEY}
 
   # ── ④ audio (STT)：千问 Qwen-Omni (DashScope OpenAI 兼容) ──
   # 走 /chat/completions + content[input_audio]，base64 直传，不需要文件 URL
   # 候选模型：qwen3-omni-flash / qwen-omni-turbo / qwen3-omni-30b-a3b-instruct
-  audio-model: qwen3-omni-flash
-  audio-api-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-  audio-api-key: sk-0f77a6941aff43bab6b8d21db90134bf
+  audio-model: ${LLM_AUDIO_MODEL:qwen3-omni-flash}
+  audio-api-url: ${LLM_AUDIO_API_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+  audio-api-key: ${LLM_AUDIO_API_KEY}
 
   # ── ⑤ tts：CosyVoice (DashScope WebSocket SDK) ──
   # 使用 SpeechSynthesizer WebSocket 协议，直接返回音频字节，无 OSS 下载环节
   # 候选音色：longwan / longxiaochun / longanyang / longxiaobei …（详见 DashScope 文档）
-  tts-model: cosyvoice-v3.5-flash
-  tts-api-url: https://dashscope.aliyuncs.com/api/v1
-  tts-api-key: sk-0f77a6941aff43bab6b8d21db90134bf
+  tts-model: ${LLM_TTS_MODEL:cosyvoice-v3.5-flash}
+  tts-api-url: ${LLM_TTS_API_URL:https://dashscope.aliyuncs.com/api/v1}
+  tts-api-key: ${LLM_TTS_API_KEY}
 
 # 文件上传路径
 file:
@@ -116,11 +117,11 @@ langchain4j:
       api-key: ${llm.api-key}
       model-name: ${llm.model}
   pgvector:
-    host: localhost
+    host: ${DB_HOST:localhost}
     port: 5432
     database: kaoyan
-    user: postgres
-    password: 123456
+    user: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD}
     table: langchain_chunks
     dimension: 1536
     create-table: true

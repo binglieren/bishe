@@ -1,6 +1,7 @@
 package com.example.kaoyan.controller;
 
 import com.example.kaoyan.dto.AnswerRequest;
+import com.example.kaoyan.dto.ImageAnswerRequest;
 import com.example.kaoyan.dto.QuestionDTO;
 import com.example.kaoyan.dto.QuestionRecommendationDTO;
 import com.example.kaoyan.entity.KnowledgePoint;
@@ -123,11 +124,21 @@ public class QuestionController {
     @PostMapping("/{id}/attempt")
     @Operation(summary = "记录一次做题，更新正确率和上次做题时间")
     public Result<Map<String, Object>> recordAttempt(Authentication auth,
-                                                      @PathVariable Long id,
-                                                      @RequestBody AnswerRequest request) {
+                                                       @PathVariable Long id,
+                                                       @RequestBody AnswerRequest request) {
         Long userId = (Long) auth.getPrincipal();
         request.setQuestionId(id);
         return Result.success(questionService.recordAttemptForUserQuestion(userId, request));
+    }
+
+    @PostMapping("/{id}/attempt-image")
+    @Operation(summary = "简答题提交手写图片答案，LLM 判定对错")
+    public Result<Map<String, Object>> recordImageAttempt(Authentication auth,
+                                                            @PathVariable Long id,
+                                                            @RequestBody ImageAnswerRequest request) {
+        Long userId = (Long) auth.getPrincipal();
+        request.setQuestionId(id);
+        return Result.success(questionService.submitImageAnswer(userId, request));
     }
 
     @GetMapping("/{id}/similar")

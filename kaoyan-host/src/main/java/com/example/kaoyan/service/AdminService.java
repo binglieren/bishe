@@ -5,9 +5,12 @@ import com.example.kaoyan.entity.Question;
 import com.example.kaoyan.entity.User;
 import com.example.kaoyan.repository.ChatSessionRepository;
 import com.example.kaoyan.repository.DocumentRepository;
+import com.example.kaoyan.repository.KnowledgeMasteryRepository;
 import com.example.kaoyan.repository.KnowledgePointRepository;
 import com.example.kaoyan.repository.QuestionRepository;
 import com.example.kaoyan.repository.UserRepository;
+import com.example.kaoyan.repository.WrongAnswerRepository;
+import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -32,6 +35,9 @@ public class AdminService {
     private final DocumentRepository documentRepository;
     private final ChatSessionRepository chatSessionRepository;
     private final PasswordEncoder passwordEncoder;
+    private final WrongAnswerRepository wrongAnswerRepository;
+    private final KnowledgeMasteryRepository knowledgeMasteryRepository;
+    private final EntityManager entityManager;
 
     // ==================== 数据统计 ====================
 
@@ -137,13 +143,19 @@ public class AdminService {
     }
 
     /**
-     * 删除题目
+     * 删除题目（先清理无 CASCADE 约束的关联数据，再删除题目）
      */
     @Transactional
     public void deleteQuestion(Long questionId) {
         if (!questionRepository.existsById(questionId)) {
             throw new IllegalArgumentException("题目不存在");
         }
+        // 清理没有 ON DELETE CASCADE 的关联表
+        wrongAnswerRepository.deleteByQuestionId(questionId);
+        entityManager.createNativeQuery("DELETE FROM exam_answer WHERE question_id = :qid")
+                .setParameter("qid", questionId).executeUpdate();
+        entityManager.createNativeQuery("DELETE FROM exam_question WHERE question_id = :qid")
+                .setParameter("qid", questionId).executeUpdate();
         questionRepository.deleteById(questionId);
     }
 
@@ -180,13 +192,19 @@ public class AdminService {
     }
 
     /**
-     * 删除知识点
+     * 删除知识点（先清理无 CASCADE 约束的关联数据，再删除知识点）
      */
     @Transactional
     public void deleteKnowledgePoint(Long kpId) {
         if (!knowledgePointRepository.existsById(kpId)) {
             throw new IllegalArgumentException("知识点不存在");
         }
+        // 1. 子知识点：解除父知识点引用
+        knowledgePointRepository.clearParentIdByParentId(kpId);
+        // 2. 题目：解除知识点引用
+        questionRepository.clearKnowledgePointId(kpId);
+        // 3. 知识点掌握度记录
+        knowledgeMasteryRepository.deleteByKnowledgePointId(kpId);
         knowledgePointRepository.deleteById(kpId);
     }
 }

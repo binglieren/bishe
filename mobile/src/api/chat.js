@@ -91,8 +91,11 @@ export const sendMessageStream = (data, onToken, onError, onDone, onSession, onR
       .then(tok => {
         const es = new EventSource(`${baseUrl}/api/chat/send/stream`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...data, token: tok || '' }),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': tok ? `Bearer ${tok}` : '',
+          },
+          body: JSON.stringify(data),
         });
 
         es.addEventListener('session', (event) => {

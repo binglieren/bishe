@@ -10,7 +10,6 @@ import com.example.kaoyan.entity.ChatSession;
 import com.example.kaoyan.service.ChatService;
 import com.example.kaoyan.service.LlmService;
 import com.example.kaoyan.util.AgentDebugLog;
-import com.example.kaoyan.util.JwtUtil;
 import com.example.kaoyan.util.Result;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -34,7 +33,6 @@ public class ChatController {
 
     private final ChatService chatService;
     private final LlmService llmService;
-    private final JwtUtil jwtUtil;
 
     @PostMapping("/session")
     @Operation(summary = "创建对话会话")
@@ -201,9 +199,11 @@ public class ChatController {
 
     @PostMapping(value = "/send/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "真流式 SSE，支持 RAG + 历史 + thinking")
-    public SseEmitter sendStream(@RequestBody Map<String, Object> body) {
-        Long userId = extractTokenUserId(body);
-        if (userId == null) throw new RuntimeException("token required");
+    public SseEmitter sendStream(Authentication auth, @RequestBody Map<String, Object> body) {
+        if (auth == null || !(auth.getPrincipal() instanceof Long)) {
+            throw new RuntimeException("token required");
+        }
+        Long userId = (Long) auth.getPrincipal();
         SseEmitter emitter = new SseEmitter(600_000L);
 
         final String message = (String) body.get("message");
@@ -352,15 +352,4 @@ public class ChatController {
         );
     }
 
-    private Long extractTokenUserId(Map<String, Object> body) {
-        try {
-            Object tok = body.get("token");
-            if (tok == null) return null;
-            String token = tok.toString();
-            if (token.startsWith("Bearer ")) token = token.substring(7);
-            return jwtUtil.getUserIdFromToken(token);
-        } catch (Exception e) {
-            return null;
-        }
-    }
 }

@@ -6,6 +6,10 @@ import {
   ScrollView,
   TouchableOpacity,
   Text as RNText,
+  Image,
+  Alert,
+  Platform,
+  TextInput,
 } from 'react-native';
 import {
   Text,
@@ -15,10 +19,12 @@ import {
   ActivityIndicator,
 } from 'react-native-paper';
 import dayjs from 'dayjs';
+import * as ImagePicker from 'expo-image-picker';
 import {
   getMyQuestions,
   getMyKnowledgePoints,
   recordAttempt,
+  recordImageAttempt,
   getSimilarQuestions,
   getRecommendations,
 } from '../api/question';
@@ -78,6 +84,8 @@ export default function QuestionScreen() {
   const [showAnswer, setShowAnswer] = useState(false);
   const [attemptResult, setAttemptResult] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [textAnswer, setTextAnswer] = useState('');
 
   const [similarQuestions, setSimilarQuestions] = useState([]);
   const [loadingSimilar, setLoadingSimilar] = useState(false);
@@ -138,6 +146,8 @@ export default function QuestionScreen() {
     setShowAnswer(false);
     setAttemptResult(null);
     setSimilarQuestions([]);
+    setSelectedImage(null);
+    setTextAnswer('');
   };
 
   const closePractice = () => {
@@ -187,6 +197,70 @@ export default function QuestionScreen() {
     setSelectedOptions(prev =>
       prev.includes(label) ? prev.filter(l => l !== label) : [...prev, label]
     );
+  };
+
+  // ── Image picker for short-answer ─────────────────────
+  const pickImage = async (useCamera) => {
+    const options = {
+      mediaTypes: ['images'],
+      quality: 0.5,
+      base64: true,
+      allowsEditing: true,
+    };
+    let result;
+    if (useCamera) {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        setSnackMsg('需要相机权限');
+        setSnackVisible(true);
+        return;
+      }
+      result = await ImagePicker.launchCameraAsync(options);
+    } else {
+      result = await ImagePicker.launchImageLibraryAsync(options);
+    }
+    if (!result.canceled && result.assets?.[0]) {
+      const asset = result.assets[0];
+      setSelectedImage({ uri: asset.uri, base64: asset.base64 });
+    }
+  };
+
+  const handleImagePick = () => {
+    if (Platform.OS === 'web') {
+      pickImage(false);
+    } else {
+      Alert.alert('选择图片', '请选择图片来源', [
+        { text: '拍照', onPress: () => pickImage(true) },
+        { text: '从相册选择', onPress: () => pickImage(false) },
+        { text: '取消', style: 'cancel' },
+      ]);
+    }
+  };
+
+  const handleSubmitImage = async () => {
+    const q = practiceItem?.question;
+    if (!q) return;
+
+    if (!selectedImage?.base64 && !textAnswer.trim()) {
+      setSnackMsg('请上传手写答案图片或输入文字答案');
+      setSnackVisible(true);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await recordImageAttempt(q.id, {
+        imageBase64: selectedImage?.base64 || null,
+        userAnswer: textAnswer.trim() || null,
+      });
+      setAttemptResult(res.data);
+      loadSimilar(q.id);
+    } catch (err) {
+      setSnackMsg('LLM 判定失败，请重试');
+      setSnackVisible(true);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const getAccuracy = (uq) => {
@@ -402,21 +476,73 @@ export default function QuestionScreen() {
           )}
 
           {/* 简答/填空/证明 */}
-          {(q.type === '简答' || q.type === '填空' || q.type === '证明') && (
+          {(q.type === '简答' || q.type === '填空' || q.type === '证明') && !attemptResult && (
             <View>
               {!showAnswer ? (
-                <Button
-                  mode="contained-tonal"
-                  onPress={() => {
-                    setShowAnswer(true);
-                    recordAttempt(q.id, { userAnswer: '__viewed__' }).catch(() => {});
-                    loadSimilar(q.id);
-                  }}
-                  style={styles.showAnswerBtn}
-                  icon="eye"
-                >
-                  查看参考答案
-                </Button>
+                <View style={styles.shortAnswerSection}>
+                  <View style={styles.imagePickRow}>
+                    <Button
+                      mode="outlined"
+                      onPress={handleImagePick}
+                      icon="camera"
+                      style={styles.imagePickBtn}
+                    >
+                      拍照
+                    </Button>
+                    <Button
+                      mode="outlined"
+                      onPress={() => pickImage(false)}
+                      icon="image"
+                      style={styles.imagePickBtn}
+                    >
+                      相册
+                    </Button>
+                  </View>
+
+                  {selectedImage && (
+                    <Image
+                      source={{ uri: selectedImage.uri }}
+                      style={styles.previewImage}
+                      resizeMode="contain"
+                    />
+                  )}
+
+                  <Text style={styles.inputLabel}>或手动输入答案：</Text>
+                  <TextInput
+                    style={styles.textAnswerInput}
+                    value={textAnswer}
+                    onChangeText={setTextAnswer}
+                    placeholder="在此输入你的答案..."
+                    placeholderTextColor={colors.textSecondary}
+                    multiline
+                    numberOfLines={4}
+                    textAlignVertical="top"
+                  />
+
+                  <Button
+                    mode="contained"
+                    onPress={handleSubmitImage}
+                    loading={submitting}
+                    style={styles.submitBtn}
+                    contentStyle={{ paddingVertical: 4 }}
+                    labelStyle={{ fontSize: 15, fontWeight: '700' }}
+                  >
+                    提交答案
+                  </Button>
+
+                  <Button
+                    mode="text"
+                    onPress={() => {
+                      setShowAnswer(true);
+                      recordAttempt(q.id, { userAnswer: '__viewed__' }).catch(() => {});
+                      loadSimilar(q.id);
+                    }}
+                    textColor={colors.textSecondary}
+                    style={{ marginTop: spacing.sm }}
+                  >
+                    查看参考答案
+                  </Button>
+                </View>
               ) : (
                 <ModernCard
                   padding={16}
@@ -466,10 +592,19 @@ export default function QuestionScreen() {
               >
                 {attemptResult.isCorrect ? '🎉 回答正确！' : '💪 再接再厉'}
               </Text>
-              {!attemptResult.isCorrect && (
-                <Text style={styles.resultAnswer}>
-                  正确答案：<Text style={{ fontWeight: '700' }}>{attemptResult.correctAnswer}</Text>
+              {attemptResult.score != null && (
+                <Text style={styles.resultScore}>
+                  📊 LLM 评分：{attemptResult.score}/100
                 </Text>
+              )}
+              {attemptResult.feedback && (
+                <MathText value={`💬 ${attemptResult.feedback}`} style={styles.resultFeedback} />
+              )}
+              {!attemptResult.isCorrect && (
+                <View style={{ marginTop: spacing.sm }}>
+                  <Text style={styles.answerLabel}>✅ 正确答案</Text>
+                  <MathText value={attemptResult.correctAnswer} style={styles.answerText} />
+                </View>
               )}
               {attemptResult.analysis ? (
                 <MathText value={"📖 " + attemptResult.analysis} style={styles.analysisText} />
@@ -1051,5 +1186,54 @@ const styles = StyleSheet.create({
     marginTop: spacing.xl,
     borderRadius: radii.md,
     borderColor: colors.border,
+  },
+
+  // Short answer image upload
+  shortAnswerSection: {
+    marginTop: spacing.md,
+  },
+  imagePickRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  imagePickBtn: {
+    flex: 1,
+    borderRadius: radii.md,
+  },
+  previewImage: {
+    width: '100%',
+    height: 180,
+    borderRadius: radii.md,
+    marginBottom: spacing.sm,
+    backgroundColor: colors.surfaceAlt,
+  },
+  inputLabel: {
+    ...typography.bodySm,
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+  },
+  textAnswerInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    padding: spacing.sm,
+    fontSize: 14,
+    color: colors.textPrimary,
+    backgroundColor: colors.surface,
+    minHeight: 80,
+    marginBottom: spacing.md,
+  },
+  resultScore: {
+    ...typography.bodySm,
+    color: colors.textSecondary,
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  resultFeedback: {
+    ...typography.bodySm,
+    color: colors.textPrimary,
+    marginTop: 4,
+    lineHeight: 20,
   },
 });

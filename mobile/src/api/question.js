@@ -27,6 +27,8 @@ export const getMyKnowledgePoints = () => request.get('/question/my/knowledge-po
 
 export const recordAttempt = (id, data) => request.post(`/question/${id}/attempt`, data);
 
+export const recordImageAttempt = (id, data) => request.post(`/question/${id}/attempt-image`, data);
+
 export const getSimilarQuestions = (id, limit = 5) =>
   request.get(`/question/${id}/similar`, { params: { limit } });
 

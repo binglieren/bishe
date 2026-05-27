@@ -68,4 +68,10 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
                                    @Param("type") String type,
                                    @Param("difficulty") Integer difficulty,
                                    @Param("kpId") Long kpId);
+
+    /** 删除知识点时解除题目的知识点引用 */
+    @Modifying
+    @Transactional
+    @Query("UPDATE Question q SET q.knowledgePointId = NULL WHERE q.knowledgePointId = :kpId")
+    void clearKnowledgePointId(@Param("kpId") Long kpId);
 }

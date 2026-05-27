@@ -3,19 +3,19 @@ server:
 
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/kaoyan
-    username: postgres
-    password: 123456
+    url: jdbc:postgresql://${DB_HOST:localhost}:5432/kaoyan
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: none
 
 llm:
   embedding:
-    api-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    api-key: sk-0f77a6941aff43bab6b8d21db90134bf
-    model: text-embedding-v4
+    api-url: ${LLM_EMBEDDING_API_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+    api-key: ${LLM_EMBEDDING_API_KEY}
+    model: ${LLM_EMBEDDING_MODEL:text-embedding-v4}
 
 langchain4j:
   open-ai:
@@ -25,11 +25,11 @@ langchain4j:
       model-name: ${llm.embedding.model}
       dimensions: 1536
   pgvector:
-    host: localhost
+    host: ${DB_HOST:localhost}
     port: 5432
     database: kaoyan
-    user: postgres
-    password: 123456
+    user: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD}
     table: langchain_chunks
     dimension: 1536
     create-table: false

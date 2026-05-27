@@ -4,6 +4,10 @@ import com.example.kaoyan.entity.WrongAnswerRecord;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface WrongAnswerRepository extends JpaRepository<WrongAnswerRecord, Long> {
 
@@ -12,6 +16,11 @@ public interface WrongAnswerRepository extends JpaRepository<WrongAnswerRecord, 
     Page<WrongAnswerRecord> findByUserIdAndIsResolvedOrderByCreatedAtDesc(Long userId, Boolean isResolved, Pageable pageable);
 
     boolean existsByUserIdAndQuestionId(Long userId, Long questionId);
+
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM WrongAnswerRecord w WHERE w.questionId = :questionId")
+    void deleteByQuestionId(@Param("questionId") Long questionId);
 
     /**
      * 找用户在某个知识点下答错过的 question_id 列表（去重，最近 N 个）。
